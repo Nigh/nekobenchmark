@@ -1,0 +1,10 @@
+# CMake build trees
+/build*/
+
+# IDE and editor metadata
+/.idea/
+/.vscode/
+
+# Platform files
+.DS_Store
+Thumbs.db
