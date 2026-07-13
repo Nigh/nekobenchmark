@@ -1,5 +1,5 @@
 # NekoBenchmark
-<img width="982" height="600" alt="image" src="https://github.com/user-attachments/assets/1ddc2ca0-6730-44bb-bf12-bf11b98605fa" />
+<img width="985" height="592" alt="dda2e6134e2336592c3a94588c80d2a1" src="https://github.com/user-attachments/assets/40dd8c15-b741-46dc-a0e6-90f36db4f7d9" />
 
 一个本地运行的基于 SDL3 反应速度测试工具，支持 Windows、Linux 和 macOS。
 
