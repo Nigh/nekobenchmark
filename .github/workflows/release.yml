@@ -16,13 +16,13 @@ jobs:
         include:
           - name: Linux x64
             os: ubuntu-latest
-            asset: nekobenchmark-linux-x64
+            asset: nekobenchmark-linux-x64.zip
           - name: Windows x64
             os: windows-latest
-            asset: nekobenchmark-windows-x64.exe
+            asset: nekobenchmark-windows-x64.zip
           - name: macOS x64
             os: macos-26-intel
-            asset: nekobenchmark-macos-x64
+            asset: nekobenchmark-macos-x64.zip
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -45,14 +45,17 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          mkdir -p dist
-          cp build/nekobenchmark dist/${{ matrix.asset }}
+          mkdir -p dist/package
+          cp build/nekobenchmark dist/package/
+          cp build/MapleMono-Regular.ttf assets/MapleMono-OFL.txt dist/package/
+          (cd dist/package && zip -r ../${{ matrix.asset }} .)
       - name: Prepare Windows binary
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force dist
-          Copy-Item build/Release/nekobenchmark.exe dist/${{ matrix.asset }}
+          New-Item -ItemType Directory -Force dist/package
+          Copy-Item build/Release/nekobenchmark.exe,build/Release/MapleMono-Regular.ttf,assets/MapleMono-OFL.txt dist/package/
+          Compress-Archive -Path dist/package/* -DestinationPath dist/${{ matrix.asset }}
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
@@ -73,7 +76,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "build-${GITHUB_RUN_NUMBER}" release-assets/* \
+          gh release create --repo "$GH_REPO" "build-${GITHUB_RUN_NUMBER}" release-assets/* \
             --target "$GITHUB_SHA" \
             --title "Build ${GITHUB_RUN_NUMBER}" \
             --notes "Automated cross-platform binaries for commit ${GITHUB_SHA}."
