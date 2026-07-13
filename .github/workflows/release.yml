@@ -32,7 +32,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev \
-            libxi-dev libxfixes-dev libxss-dev \
+            libxi-dev libxfixes-dev libxss-dev libxtst-dev \
             libwayland-dev libxkbcommon-dev libdecor-0-dev \
             libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev libvulkan-dev
       - name: Configure
