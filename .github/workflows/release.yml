@@ -47,14 +47,15 @@ jobs:
         run: |
           mkdir -p dist/package
           cp build/nekobenchmark dist/package/
-          cp build/MapleMono-Regular.ttf assets/MapleMono-OFL.txt dist/package/
+          cp build/MapleMono-Regular.ttf build/NotoSansCJKsc-Regular.otf \
+            assets/MapleMono-OFL.txt build/NotoSansCJK-OFL.txt dist/package/
           (cd dist/package && zip -r ../${{ matrix.asset }} .)
       - name: Prepare Windows binary
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist/package
-          Copy-Item build/Release/nekobenchmark.exe,build/Release/MapleMono-Regular.ttf,assets/MapleMono-OFL.txt dist/package/
+          Copy-Item build/Release/nekobenchmark.exe,build/Release/MapleMono-Regular.ttf,build/Release/NotoSansCJKsc-Regular.otf,assets/MapleMono-OFL.txt,build/Release/NotoSansCJK-OFL.txt dist/package/
           Compress-Archive -Path dist/package/* -DestinationPath dist/${{ matrix.asset }}
       - uses: actions/upload-artifact@v7
         with:

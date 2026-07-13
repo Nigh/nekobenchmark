@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <numbers>
 #include <random>
 #include <string>
 #include <unordered_map>
@@ -14,7 +15,7 @@
 
 namespace {
 
-enum class Stage { Ready, Waiting, Go, Summary, Invalid };
+enum class Stage { Ready, Waiting, Go, Summary, Invalid, AwaitingNextTrial };
 enum class Palette { RedGreen, YellowBlue };
 enum class Language { English, Chinese };
 
@@ -25,6 +26,7 @@ struct TestState {
     Stage stage{Stage::Ready};
     Palette palette{Palette::RedGreen};
     Language language{Language::English};
+    bool reverse_color_order{};
     Uint64 target_time_ns{};
     std::array<Uint64, kTrialCount> reactions_ns{};
     size_t reaction_count{};
@@ -55,6 +57,14 @@ struct TestState {
         } else if (stage == Stage::Go) {
             reactions_ns[reaction_count++] = event_ns >= target_time_ns ? event_ns - target_time_ns : 0;
             stage = reaction_count == kTrialCount ? Stage::Summary : Stage::Waiting;
+        }
+    }
+
+    void schedule_next_trial(Uint64 now_ns, Uint64 wait_ns, bool require_key_press) {
+        if (require_key_press) {
+            stage = Stage::AwaitingNextTrial;
+        } else {
+            begin_trial(now_ns, wait_ns);
         }
     }
 };
@@ -95,6 +105,10 @@ const char* palette_name(Palette palette) {
     return palette == Palette::RedGreen ? "RED -> GREEN" : "YELLOW -> BLUE";
 }
 
+const char* localized(Language language, const char* english, const char* chinese) {
+    return language == Language::Chinese ? chinese : english;
+}
+
 const char* stage_name(Stage stage, Language language) {
     if (language == Language::Chinese) {
         switch (stage) {
@@ -103,6 +117,7 @@ const char* stage_name(Stage stage, Language language) {
         case Stage::Go: return "立即按键或点击！";
         case Stage::Summary: return "五次测试结果 - 按键或点击重新开始";
         case Stage::Invalid: return "本轮无效 - 从第一次重新开始";
+        case Stage::AwaitingNextTrial: return "按键开始下一次测试";
         }
     }
     switch (stage) {
@@ -111,6 +126,7 @@ const char* stage_name(Stage stage, Language language) {
     case Stage::Go: return "CLICK OR PRESS NOW!";
     case Stage::Summary: return "Five-trial results - press or click to restart";
     case Stage::Invalid: return "Invalid round - restart from trial one";
+    case Stage::AwaitingNextTrial: return "Press a key to begin the next trial";
     }
     return "";
 }
@@ -127,10 +143,9 @@ bool held_for_trigger(Uint64 pressed_ns, Uint64 released_ns) {
            released_ns - pressed_ns >= TestState::kTimeoutNs;
 }
 
-void set_window_title(SDL_Window* window, const TestState& test, float refresh_hz, int vsync) {
+void set_window_title(SDL_Window* window, float refresh_hz, int vsync) {
     char title[256];
-    std::snprintf(title, sizeof(title), "NekoBenchmark | %s | %.1f Hz | VSync: %s",
-                  stage_name(test.stage, test.language), refresh_hz,
+    std::snprintf(title, sizeof(title), "NekoBenchmark | %.1f Hz | VSync: %s", refresh_hz,
                   vsync == 0 ? "disabled" : "enabled/unknown");
     SDL_SetWindowTitle(window, title);
 }
@@ -154,9 +169,13 @@ void run_self_check() {
     expect(test.stage == Stage::Go);
     test.react(180);
     expect(test.stage == Stage::Waiting && test.reaction_count == 1 && test.reactions_ns[0] == 30);
+    test.schedule_next_trial(180, 50, true);
+    expect(test.stage == Stage::AwaitingNextTrial && test.reaction_count == 1);
+    test.begin_trial(190, 50);
+    expect(test.stage == Stage::Waiting && test.reaction_count == 1);
 
-    test.update(151);
-    test.update(151 + TestState::kTimeoutNs + 1);
+    test.update(240);
+    test.update(240 + TestState::kTimeoutNs + 1);
     expect(test.stage == Stage::Invalid && test.reaction_count == 0);
 
     const ReactionStats stats = calculate_stats({100'000'000ULL, 200'000'000ULL, 300'000'000ULL,
@@ -167,6 +186,8 @@ void run_self_check() {
 
     test.palette = Palette::YellowBlue;
     expect(std::strcmp(palette_name(test.palette), "YELLOW -> BLUE") == 0);
+    test.reverse_color_order = true;
+    expect(test.reverse_color_order);
     test.language = Language::Chinese;
     expect(std::strcmp(stage_name(Stage::Go, test.language), "立即按键或点击！") == 0);
     expect(is_reaction_key(SDL_SCANCODE_UP));
@@ -188,7 +209,8 @@ struct TextCache {
         float width{};
         float height{};
     };
-    explicit TextCache(std::string font_path) : font_path_(std::move(font_path)) {}
+    TextCache(std::string latin_font_path, std::string cjk_font_path)
+        : latin_font_path_(std::move(latin_font_path)), cjk_font_path_(std::move(cjk_font_path)) {}
 
     void draw_centered(SDL_Renderer* renderer, const char* text, float center_x, float y, float point_size,
                        SDL_Color color) {
@@ -231,9 +253,12 @@ struct TextCache {
         }
 
         const int size = static_cast<int>(point_size);
-        TTF_Font*& font = fonts_[size];
+        const bool use_cjk_font = std::any_of(text, text + std::strlen(text),
+                                              [](unsigned char character) { return character >= 0xE3; });
+        const std::string font_key = (use_cjk_font ? "cjk:" : "latin:") + std::to_string(size);
+        TTF_Font*& font = fonts_[font_key];
         if (font == nullptr) {
-            font = TTF_OpenFont(font_path_.c_str(), point_size);
+            font = TTF_OpenFont((use_cjk_font ? cjk_font_path_ : latin_font_path_).c_str(), point_size);
         }
         if (font == nullptr) {
             return nullptr;
@@ -254,9 +279,10 @@ struct TextCache {
         return &entries_.emplace(key, Entry{texture, width, height}).first->second;
     }
 
-    std::string font_path_;
+    std::string latin_font_path_;
+    std::string cjk_font_path_;
     std::unordered_map<std::string, Entry> entries_;
-    std::unordered_map<int, TTF_Font*> fonts_;
+    std::unordered_map<std::string, TTF_Font*> fonts_;
 };
 
 constexpr SDL_Color kInk{235, 240, 249, SDL_ALPHA_OPAQUE};
@@ -351,13 +377,19 @@ void draw_progress(SDL_Renderer* renderer, const TestState& test, float center_x
 void render(SDL_Renderer* renderer, TextCache& text, const TestState& test, float refresh_hz,
             bool vsync_disabled) {
     const bool target_visible = test.stage == Stage::Waiting || test.stage == Stage::Go;
+    const SDL_Color palette_start =
+        test.palette == Palette::RedGreen ? SDL_Color{186, 53, 62, SDL_ALPHA_OPAQUE}
+                                          : SDL_Color{228, 177, 27, SDL_ALPHA_OPAQUE};
+    const SDL_Color palette_end =
+        test.palette == Palette::RedGreen ? SDL_Color{33, 170, 94, SDL_ALPHA_OPAQUE}
+                                          : SDL_Color{48, 111, 215, SDL_ALPHA_OPAQUE};
+    const SDL_Color start_color = test.reverse_color_order ? palette_end : palette_start;
+    const SDL_Color end_color = test.reverse_color_order ? palette_start : palette_end;
     SDL_Color background{11, 16, 30, SDL_ALPHA_OPAQUE};
     if (test.stage == Stage::Waiting) {
-        background = test.palette == Palette::RedGreen ? SDL_Color{186, 53, 62, SDL_ALPHA_OPAQUE}
-                                                        : SDL_Color{228, 177, 27, SDL_ALPHA_OPAQUE};
+        background = start_color;
     } else if (test.stage == Stage::Go) {
-        background = test.palette == Palette::RedGreen ? SDL_Color{33, 170, 94, SDL_ALPHA_OPAQUE}
-                                                        : SDL_Color{48, 111, 215, SDL_ALPHA_OPAQUE};
+        background = end_color;
     }
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     fill_rect(renderer, {0.0f, 0.0f, 10000.0f, 10000.0f}, background);
@@ -377,19 +409,23 @@ void render(SDL_Renderer* renderer, TextCache& text, const TestState& test, floa
     text.draw_centered(renderer, "NEKO / BENCHMARK", center_x, 20.0f, 17.0f, foreground);
     draw_card(renderer, {center_x - 185.0f, 48.0f, 370.0f, 38.0f},
               target_visible ? SDL_Color{7, 17, 34, 82} : SDL_Color{18, 26, 44, SDL_ALPHA_OPAQUE}, card_border, 11.0f);
-    const SDL_Color start_color =
-        test.palette == Palette::RedGreen ? SDL_Color{186, 53, 62, SDL_ALPHA_OPAQUE} : SDL_Color{228, 177, 27, SDL_ALPHA_OPAQUE};
-    const SDL_Color end_color =
-        test.palette == Palette::RedGreen ? SDL_Color{33, 170, 94, SDL_ALPHA_OPAQUE} : SDL_Color{48, 111, 215, SDL_ALPHA_OPAQUE};
-    const char* start_name = test.palette == Palette::RedGreen ? "RED" : "YELLOW";
-    const char* end_name = test.palette == Palette::RedGreen ? "GREEN" : "BLUE";
+    const char* palette_start_name = test.palette == Palette::RedGreen
+                                 ? localized(test.language, "RED", "红")
+                                 : localized(test.language, "YELLOW", "黄");
+    const char* palette_end_name = test.palette == Palette::RedGreen
+                               ? localized(test.language, "GREEN", "绿")
+                               : localized(test.language, "BLUE", "蓝");
+    const char* start_name = test.reverse_color_order ? palette_end_name : palette_start_name;
+    const char* end_name = test.reverse_color_order ? palette_start_name : palette_end_name;
     text.draw_centered(renderer, start_name, center_x - 106.0f, 60.0f, 12.0f, foreground);
     draw_color_swatch(renderer, {center_x - 76.0f, 59.0f, 18.0f, 18.0f}, start_color, foreground);
     text.draw_centered(renderer, "→", center_x, 59.0f, 16.0f, soft_foreground);
     draw_color_swatch(renderer, {center_x + 56.0f, 59.0f, 18.0f, 18.0f}, end_color, foreground);
     text.draw_centered(renderer, end_name, center_x + 108.0f, 60.0f, 12.0f, foreground);
-    text.draw_centered(renderer, vsync_disabled ? "IMMEDIATE PRESENT" : "PRESENT UNCONFIRMED", center_x, 91.0f,
-                       11.0f, soft_foreground);
+    text.draw_centered(renderer, vsync_disabled
+                                     ? localized(test.language, "IMMEDIATE PRESENT", "立即呈现")
+                                     : localized(test.language, "PRESENT UNCONFIRMED", "呈现状态未知"),
+                       center_x, 91.0f, 11.0f, soft_foreground);
 
     if (test.stage == Stage::Summary) {
         const float median_width = std::min(420.0f, card_width);
@@ -402,22 +438,28 @@ void render(SDL_Renderer* renderer, TextCache& text, const TestState& test, floa
         std::snprintf(median_line, sizeof(median_line), "%.1f ms", stats.median_ms);
         std::snprintf(mean_line, sizeof(mean_line), "%.1f ms", stats.mean_ms);
         std::snprintf(deviation_line, sizeof(deviation_line), "%.1f ms", stats.standard_deviation_ms);
-        std::snprintf(display_line, sizeof(display_line),
-                      refresh_hz > 0.0f ? "%.0f Hz  ·  ±%.2f ms" : "REFRESH RATE UNAVAILABLE", refresh_hz,
-                      frame_uncertainty_ms(refresh_hz));
+        if (refresh_hz > 0.0f) {
+            std::snprintf(display_line, sizeof(display_line), "%.0f Hz  ·  ±%.2f ms", refresh_hz,
+                          frame_uncertainty_ms(refresh_hz));
+        } else {
+            std::snprintf(display_line, sizeof(display_line), "%s",
+                          localized(test.language, "REFRESH RATE UNAVAILABLE", "刷新率不可用"));
+        }
 
         constexpr float kResultGap = 7.0f;
-        const auto title_metrics = text.measure(renderer, "FIVE-TRIAL RESULT", 15.0f, kMuted);
+        const char* result_title = localized(test.language, "FIVE-TRIAL RESULT", "五次测试结果");
+        const char* median_label = localized(test.language, "MEDIAN REACTION TIME", "反应时间中位数");
+        const auto title_metrics = text.measure(renderer, result_title, 15.0f, kMuted);
         const auto median_metrics = text.measure(renderer, median_line, 54.0f, kInk);
-        const auto median_label_metrics = text.measure(renderer, "MEDIAN REACTION TIME", 13.0f, kAccent);
+        const auto median_label_metrics = text.measure(renderer, median_label, 13.0f, kAccent);
         float result_y = 178.0f -
                          (title_metrics.height + median_metrics.height + median_label_metrics.height + kResultGap * 2.0f) /
                              2.0f;
-        text.draw_centered(renderer, "FIVE-TRIAL RESULT", center_x, result_y, 15.0f, kMuted);
+        text.draw_centered(renderer, result_title, center_x, result_y, 15.0f, kMuted);
         result_y += title_metrics.height + kResultGap;
         text.draw_centered(renderer, median_line, center_x, result_y, 54.0f, kInk);
         result_y += median_metrics.height + kResultGap;
-        text.draw_centered(renderer, "MEDIAN REACTION TIME", center_x, result_y, 13.0f, kAccent);
+        text.draw_centered(renderer, median_label, center_x, result_y, 13.0f, kAccent);
 
         const float gap = 12.0f;
         const float column_width = (card_width - gap * 2.0f) / 3.0f;
@@ -429,64 +471,97 @@ void render(SDL_Renderer* renderer, TextCache& text, const TestState& test, floa
         constexpr float kMetricGap = 8.0f;
         const float metric_center_y = metric_y + 52.0f;
         const auto mean_metrics = text.measure(renderer, mean_line, 21.0f, kInk);
-        const auto mean_label_metrics = text.measure(renderer, "MEAN", 12.0f, kMuted);
+        const char* mean_label = localized(test.language, "MEAN", "平均值");
+        const auto mean_label_metrics = text.measure(renderer, mean_label, 12.0f, kMuted);
         float mean_y = metric_center_y - (mean_metrics.height + kMetricGap + mean_label_metrics.height) / 2.0f;
         text.draw_centered(renderer, mean_line, card_x + column_width * 0.5f, mean_y, 21.0f, kInk);
-        text.draw_centered(renderer, "MEAN", card_x + column_width * 0.5f, mean_y + mean_metrics.height + kMetricGap,
+        text.draw_centered(renderer, mean_label, card_x + column_width * 0.5f, mean_y + mean_metrics.height + kMetricGap,
                            12.0f, kMuted);
 
         const auto deviation_metrics = text.measure(renderer, deviation_line, 21.0f, kInk);
-        const auto deviation_label_metrics = text.measure(renderer, "STD DEV", 12.0f, kMuted);
+        const char* deviation_label = localized(test.language, "STD DEV", "标准差");
+        const auto deviation_label_metrics = text.measure(renderer, deviation_label, 12.0f, kMuted);
         float deviation_y =
             metric_center_y - (deviation_metrics.height + kMetricGap + deviation_label_metrics.height) / 2.0f;
         text.draw_centered(renderer, deviation_line, card_x + column_width * 1.5f + gap, deviation_y, 21.0f, kInk);
-        text.draw_centered(renderer, "STD DEV", card_x + column_width * 1.5f + gap,
+        text.draw_centered(renderer, deviation_label, card_x + column_width * 1.5f + gap,
                            deviation_y + deviation_metrics.height + kMetricGap, 12.0f, kMuted);
 
         const auto display_metrics = text.measure(renderer, display_line, 16.0f, kInk);
-        const auto display_label_metrics = text.measure(renderer, "DISPLAY ERROR", 12.0f, kMuted);
+        const char* display_label = localized(test.language, "DISPLAY ERROR", "显示误差");
+        const auto display_label_metrics = text.measure(renderer, display_label, 12.0f, kMuted);
         float display_y =
             metric_center_y - (display_metrics.height + kMetricGap + display_label_metrics.height) / 2.0f;
         text.draw_centered(renderer, display_line, card_x + column_width * 2.5f + gap * 2.0f, display_y, 16.0f, kInk);
-        text.draw_centered(renderer, "DISPLAY ERROR", card_x + column_width * 2.5f + gap * 2.0f,
+        text.draw_centered(renderer, display_label, card_x + column_width * 2.5f + gap * 2.0f,
                            display_y + display_metrics.height + kMetricGap, 12.0f, kMuted);
         draw_card(renderer, {center_x - 258.0f, 396.0f, 516.0f, 49.0f}, card_fill, card_border, 12.0f);
-        text.draw_centered(renderer, "Press [Z], [X], [Space], or [LMB] to try again", center_x, 412.0f, 13.0f, kMuted);
+        text.draw_centered(renderer, localized(test.language, "Press [Z], [X], [Space], or [LMB] to try again",
+                                                "按 [Z]、[X]、[空格] 或 [鼠标左键] 再试一次"),
+                           center_x, 412.0f, 13.0f, kMuted);
     } else {
         draw_card(renderer, {center_x - 250.0f, 116.0f, 500.0f, 142.0f}, card_fill, card_border);
         if (test.stage == Stage::Ready) {
-            text.draw_centered(renderer, "REACTION SPEED", center_x, 165.0f, 29.0f, kInk);
-            text.draw_centered(renderer, "Five precise trials. One second to respond.", center_x, 211.0f, 16.0f, kMuted);
+            text.draw_centered(renderer, localized(test.language, "REACTION SPEED", "反应速度"), center_x, 165.0f, 29.0f,
+                               kInk);
+            text.draw_centered(renderer,
+                               localized(test.language, "Five precise trials. One second to respond.",
+                                         "连续五次测试，每次须在一秒内作答。"),
+                               center_x, 211.0f, 16.0f, kMuted);
             draw_card(renderer, {center_x - 206.0f, 278.0f, 412.0f, 57.0f}, card_fill, card_border, 12.0f);
             draw_keycap(renderer, text, "Z", center_x - 126.0f, 293.0f, 32.0f, kAccent, SDL_Color{34, 44, 70, SDL_ALPHA_OPAQUE}, kAccent);
             draw_keycap(renderer, text, "X", center_x - 76.0f, 293.0f, 32.0f, kAccent, SDL_Color{34, 44, 70, SDL_ALPHA_OPAQUE}, kAccent);
             draw_keycap(renderer, text, "SPACE", center_x + 1.0f, 293.0f, 72.0f, kAccent, SDL_Color{34, 44, 70, SDL_ALPHA_OPAQUE}, kAccent);
             draw_keycap(renderer, text, "LMB", center_x + 78.0f, 293.0f, 48.0f, kAccent, SDL_Color{34, 44, 70, SDL_ALPHA_OPAQUE}, kAccent);
-            text.draw_centered(renderer, "BEGIN", center_x + 151.0f, 299.0f, 13.0f, kAccent);
+            text.draw_centered(renderer, localized(test.language, "BEGIN", "开始"), center_x + 151.0f, 299.0f, 13.0f,
+                               kAccent);
         } else if (test.stage == Stage::Waiting) {
-            text.draw_centered(renderer, "WAIT", center_x, 145.0f, 42.0f, kInk);
-            text.draw_centered(renderer, "Do not press or click yet.", center_x, 205.0f, 17.0f, soft_foreground);
+            text.draw_centered(renderer, localized(test.language, "WAIT", "等待"), center_x, 145.0f, 42.0f, kInk);
+            text.draw_centered(renderer, localized(test.language, "Do not press or click yet.", "请勿按键或点击。"), center_x,
+                               205.0f, 17.0f, soft_foreground);
+            const float phase = static_cast<float>(SDL_GetTicksNS() % 1'200'000'000ULL) / 1'200'000'000.0f;
+            for (int index = 0; index < 3; ++index) {
+                const float pulse = (std::sin((phase + index / 3.0f) * 2.0f * std::numbers::pi_v<float>) + 1.0f) / 2.0f;
+                const Uint8 alpha = static_cast<Uint8>(80.0f + pulse * 175.0f);
+                fill_rect(renderer, {center_x - 16.0f + index * 16.0f, 230.0f, 8.0f, 8.0f},
+                          SDL_Color{end_color.r, end_color.g, end_color.b, alpha});
+            }
         } else if (test.stage == Stage::Go) {
-            text.draw_centered(renderer, "NOW", center_x, 145.0f, 42.0f, kInk);
-            text.draw_centered(renderer, "PRESS OR CLICK", center_x, 205.0f, 17.0f, soft_foreground);
+            text.draw_centered(renderer, localized(test.language, "NOW", "现在"), center_x, 145.0f, 42.0f, kInk);
+            text.draw_centered(renderer, localized(test.language, "PRESS OR CLICK", "立即按键或点击"), center_x, 205.0f, 17.0f,
+                               soft_foreground);
+        } else if (test.stage == Stage::AwaitingNextTrial) {
+            text.draw_centered(renderer, localized(test.language, "NEXT TRIAL", "下一次测试"), center_x, 155.0f, 30.0f, kInk);
+            text.draw_centered(renderer, localized(test.language, "Press a key to begin when ready.", "准备好后按键开始。"),
+                               center_x, 205.0f, 17.0f, kMuted);
         } else {
-            text.draw_centered(renderer, "ROUND INVALID", center_x, 155.0f, 30.0f, kInk);
-            text.draw_centered(renderer, "False start or timeout. Your samples were discarded.", center_x, 205.0f, 15.0f,
-                               kMuted);
+            text.draw_centered(renderer, localized(test.language, "ROUND INVALID", "本轮无效"), center_x, 155.0f, 30.0f, kInk);
+            text.draw_centered(renderer,
+                               localized(test.language, "False start or timeout. Your samples were discarded.",
+                                         "误触或超时，已清空本轮数据。"),
+                               center_x, 205.0f, 15.0f, kMuted);
             draw_card(renderer, {center_x - 200.0f, 278.0f, 400.0f, 57.0f}, card_fill, card_border, 12.0f);
-            text.draw_centered(renderer, "PRESS [Z], [X], [SPACE], OR [LMB]", center_x, 298.0f, 14.0f, kAccent);
+            text.draw_centered(renderer, localized(test.language, "PRESS [Z], [X], [SPACE], OR [LMB]",
+                                                    "按 [Z]、[X]、[空格] 或 [鼠标左键]"),
+                               center_x, 298.0f, 14.0f, kAccent);
         }
         draw_card(renderer, {center_x - 168.0f, 360.0f, 336.0f, 61.0f}, card_fill, card_border, 12.0f);
         draw_progress(renderer, test, center_x, 383.0f);
     }
 
     const float footer_y = static_cast<float>(height) - 42.0f;
-    draw_keycap(renderer, text, "C", center_x - 118.0f, footer_y, 30.0f, soft_foreground,
+    draw_keycap(renderer, text, "C", center_x - 180.0f, footer_y, 30.0f, soft_foreground,
                 target_visible ? SDL_Color{7, 17, 34, 104} : SDL_Color{26, 35, 56, SDL_ALPHA_OPAQUE}, card_border);
-    text.draw_centered(renderer, "CHANGE COLORS", center_x - 48.0f, footer_y + 7.0f, 12.0f, soft_foreground);
-    draw_keycap(renderer, text, "ESC", center_x + 67.0f, footer_y, 42.0f, soft_foreground,
+    text.draw_centered(renderer, localized(test.language, "CHANGE COLORS", "切换配色"), center_x - 110.0f, footer_y + 7.0f,
+                       12.0f, soft_foreground);
+    draw_keycap(renderer, text, "V", center_x - 20.0f, footer_y, 30.0f, soft_foreground,
                 target_visible ? SDL_Color{7, 17, 34, 104} : SDL_Color{26, 35, 56, SDL_ALPHA_OPAQUE}, card_border);
-    text.draw_centered(renderer, "QUIT", center_x + 112.0f, footer_y + 7.0f, 12.0f, soft_foreground);
+    text.draw_centered(renderer, localized(test.language, "REVERSE ORDER", "反转顺序"), center_x + 40.0f, footer_y + 7.0f,
+                       12.0f, soft_foreground);
+    draw_keycap(renderer, text, "ESC", center_x + 145.0f, footer_y, 42.0f, soft_foreground,
+                target_visible ? SDL_Color{7, 17, 34, 104} : SDL_Color{26, 35, 56, SDL_ALPHA_OPAQUE}, card_border);
+    text.draw_centered(renderer, localized(test.language, "QUIT", "退出"), center_x + 190.0f, footer_y + 7.0f, 12.0f,
+                       soft_foreground);
     SDL_RenderPresent(renderer);
 }
 
@@ -525,9 +600,11 @@ int main(int argc, char* argv[]) {
     }
 
     const char* base_path = SDL_GetBasePath();
-    const std::string font_path = base_path != nullptr ? std::string(base_path) + "MapleMono-Regular.ttf"
-                                                       : "MapleMono-Regular.ttf";
-    TTF_Font* verification_font = TTF_OpenFont(font_path.c_str(), 16.0f);
+    const std::string latin_font_path = base_path != nullptr ? std::string(base_path) + "MapleMono-Regular.ttf"
+                                                             : "MapleMono-Regular.ttf";
+    const std::string cjk_font_path = base_path != nullptr ? std::string(base_path) + "NotoSansCJKsc-Regular.otf"
+                                                           : "NotoSansCJKsc-Regular.otf";
+    TTF_Font* verification_font = TTF_OpenFont(latin_font_path.c_str(), 16.0f);
     if (verification_font == nullptr) {
         std::fprintf(stderr, "Could not load bundled Maple Mono font: %s\n", SDL_GetError());
         SDL_DestroyRenderer(renderer);
@@ -537,7 +614,17 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     TTF_CloseFont(verification_font);
-    TextCache text(font_path);
+    verification_font = TTF_OpenFont(cjk_font_path.c_str(), 16.0f);
+    if (verification_font == nullptr) {
+        std::fprintf(stderr, "Could not load bundled Noto Sans CJK font: %s\n", SDL_GetError());
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        TTF_Quit();
+        SDL_Quit();
+        return 1;
+    }
+    TTF_CloseFont(verification_font);
+    TextCache text(latin_font_path, cjk_font_path);
 
     const bool requested_immediate = SDL_SetRenderVSync(renderer, SDL_RENDERER_VSYNC_DISABLED);
     int vsync = 1;
@@ -547,16 +634,12 @@ int main(int argc, char* argv[]) {
     // delayed by font rasterization or texture uploads.
     constexpr SDL_Color kTargetInk{255, 255, 255, SDL_ALPHA_OPAQUE};
     constexpr SDL_Color kTargetMuted{239, 245, 255, SDL_ALPHA_OPAQUE};
-    text.warm(renderer, "NEKO / BENCHMARK", 17.0f, kTargetInk);
-    text.warm(renderer, "WAIT", 42.0f, kTargetInk);
-    text.warm(renderer, "NOW", 42.0f, kTargetInk);
-    text.warm(renderer, "Do not press or click yet.", 17.0f, kTargetMuted);
-    text.warm(renderer, "PRESS OR CLICK", 17.0f, kTargetMuted);
-    for (const Palette palette : {Palette::RedGreen, Palette::YellowBlue}) {
-        char target_header[160];
-        std::snprintf(target_header, sizeof(target_header), "%s  ·  %s",
-                      vsync_disabled ? "IMMEDIATE PRESENT" : "PRESENT UNCONFIRMED", palette_name(palette));
-        text.warm(renderer, target_header, 12.0f, kTargetMuted);
+    for (const Language language : {Language::English, Language::Chinese}) {
+        text.warm(renderer, "NEKO / BENCHMARK", 17.0f, kTargetInk);
+        text.warm(renderer, localized(language, "WAIT", "等待"), 42.0f, kTargetInk);
+        text.warm(renderer, localized(language, "NOW", "现在"), 42.0f, kTargetInk);
+        text.warm(renderer, localized(language, "Do not press or click yet.", "请勿按键或点击。"), 17.0f, kTargetMuted);
+        text.warm(renderer, localized(language, "PRESS OR CLICK", "立即按键或点击"), 17.0f, kTargetMuted);
     }
 
     std::random_device random_device;
@@ -578,31 +661,37 @@ int main(int argc, char* argv[]) {
                 test.palette = test.palette == Palette::RedGreen ? Palette::YellowBlue : Palette::RedGreen;
                 continue;
             }
+            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.scancode == SDL_SCANCODE_V) {
+                test.reverse_color_order = !test.reverse_color_order;
+                continue;
+            }
             if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.scancode == SDL_SCANCODE_L) {
                 test.language = test.language == Language::English ? Language::Chinese : Language::English;
                 continue;
             }
 
-            const auto trigger_reaction = [&](Uint64 timestamp) {
+            const auto trigger_reaction = [&](Uint64 timestamp, bool release_trigger) {
                 if (test.stage == Stage::Ready || test.stage == Stage::Invalid || test.stage == Stage::Summary) {
                     test.start(timestamp, wait_ns(random));
+                } else if (test.stage == Stage::AwaitingNextTrial) {
+                    test.begin_trial(timestamp, wait_ns(random));
                 } else {
                     test.react(timestamp);
                     if (test.stage == Stage::Waiting) {
-                        test.begin_trial(timestamp, wait_ns(random));
+                        test.schedule_next_trial(timestamp, wait_ns(random), release_trigger);
                     }
                 }
             };
 
             if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
-                trigger_reaction(event.common.timestamp);
+                trigger_reaction(event.common.timestamp, false);
             } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && is_reaction_key(event.key.scancode)) {
                 key_down_ns[static_cast<size_t>(event.key.scancode)] = event.common.timestamp;
-                trigger_reaction(event.common.timestamp);
+                trigger_reaction(event.common.timestamp, false);
             } else if (event.type == SDL_EVENT_KEY_UP && is_reaction_key(event.key.scancode)) {
                 Uint64& pressed_ns = key_down_ns[static_cast<size_t>(event.key.scancode)];
                 if (held_for_trigger(pressed_ns, event.common.timestamp)) {
-                    trigger_reaction(event.common.timestamp);
+                    trigger_reaction(event.common.timestamp, true);
                 }
                 pressed_ns = 0;
             }
@@ -610,7 +699,7 @@ int main(int argc, char* argv[]) {
 
         test.update(SDL_GetTicksNS());
         const float refresh_hz = refresh_rate_for_window(window);
-        set_window_title(window, test, refresh_hz, vsync);
+        set_window_title(window, refresh_hz, vsync);
         render(renderer, text, test, refresh_hz, vsync_disabled);
     }
 

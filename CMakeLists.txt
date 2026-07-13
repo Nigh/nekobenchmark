@@ -16,6 +16,47 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(SDL)
 
+set(NOTO_SANS_CJK_FONT "${CMAKE_BINARY_DIR}/NotoSansCJKsc-Regular.otf")
+set(NOTO_SANS_CJK_LICENSE "${CMAKE_BINARY_DIR}/NotoSansCJK-OFL.txt")
+if(EXISTS "${NOTO_SANS_CJK_FONT}")
+    file(SIZE "${NOTO_SANS_CJK_FONT}" NOTO_SANS_CJK_FONT_SIZE)
+else()
+    set(NOTO_SANS_CJK_FONT_SIZE 0)
+endif()
+if(NOTO_SANS_CJK_FONT_SIZE EQUAL 0)
+    file(DOWNLOAD
+        "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf"
+        "${NOTO_SANS_CJK_FONT}"
+        STATUS NOTO_SANS_CJK_DOWNLOAD_STATUS
+        EXPECTED_HASH SHA256=2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b
+        TLS_VERIFY ON
+    )
+    list(GET NOTO_SANS_CJK_DOWNLOAD_STATUS 0 NOTO_SANS_CJK_DOWNLOAD_CODE)
+    if(NOT "${NOTO_SANS_CJK_DOWNLOAD_CODE}" STREQUAL "0")
+        list(GET NOTO_SANS_CJK_DOWNLOAD_STATUS 1 NOTO_SANS_CJK_DOWNLOAD_ERROR)
+        message(FATAL_ERROR "Could not download Noto Sans CJK: ${NOTO_SANS_CJK_DOWNLOAD_ERROR}")
+    endif()
+endif()
+if(EXISTS "${NOTO_SANS_CJK_LICENSE}")
+    file(SIZE "${NOTO_SANS_CJK_LICENSE}" NOTO_SANS_CJK_LICENSE_SIZE)
+else()
+    set(NOTO_SANS_CJK_LICENSE_SIZE 0)
+endif()
+if(NOTO_SANS_CJK_LICENSE_SIZE EQUAL 0)
+    file(DOWNLOAD
+        "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/LICENSE"
+        "${NOTO_SANS_CJK_LICENSE}"
+        STATUS NOTO_SANS_CJK_LICENSE_STATUS
+        EXPECTED_HASH SHA256=6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2
+        TLS_VERIFY ON
+    )
+    list(GET NOTO_SANS_CJK_LICENSE_STATUS 0 NOTO_SANS_CJK_LICENSE_CODE)
+    if(NOT "${NOTO_SANS_CJK_LICENSE_CODE}" STREQUAL "0")
+        list(GET NOTO_SANS_CJK_LICENSE_STATUS 1 NOTO_SANS_CJK_LICENSE_ERROR)
+        message(FATAL_ERROR "Could not download Noto Sans CJK license: ${NOTO_SANS_CJK_LICENSE_ERROR}")
+    endif()
+endif()
+
 set(SDLTTF_VENDORED ON CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(SDLTTF_HARFBUZZ OFF CACHE BOOL "" FORCE)
@@ -45,6 +86,12 @@ add_custom_command(TARGET nekobenchmark POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/assets/MapleMono-Regular.ttf"
         "$<TARGET_FILE_DIR:nekobenchmark>/MapleMono-Regular.ttf"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${NOTO_SANS_CJK_FONT}"
+        "$<TARGET_FILE_DIR:nekobenchmark>/NotoSansCJKsc-Regular.otf"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${NOTO_SANS_CJK_LICENSE}"
+        "$<TARGET_FILE_DIR:nekobenchmark>/NotoSansCJK-OFL.txt"
 )
 
 if(MSVC)
