@@ -5,6 +5,10 @@ include(FetchContent)
 # SDL's X11 screensaver integration is unrelated to this application and may
 # require an optional Linux development package.
 set(SDL_X11_XSCRNSAVER OFF CACHE BOOL "" FORCE)
+# A static SDL build keeps the Windows self-check and release executable from
+# requiring a separately deployed SDL3.dll.
+set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+set(SDL_STATIC ON CACHE BOOL "" FORCE)
 FetchContent_Declare(
     SDL
     URL https://github.com/libsdl-org/SDL/archive/refs/tags/release-3.4.8.tar.gz
@@ -14,7 +18,7 @@ FetchContent_MakeAvailable(SDL)
 
 add_executable(nekobenchmark src/main.cpp)
 target_compile_features(nekobenchmark PRIVATE cxx_std_20)
-target_link_libraries(nekobenchmark PRIVATE SDL3::SDL3)
+target_link_libraries(nekobenchmark PRIVATE SDL3::SDL3-static)
 
 if(MSVC)
     target_compile_options(nekobenchmark PRIVATE /W4 /permissive-)
