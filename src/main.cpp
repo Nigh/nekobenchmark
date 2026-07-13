@@ -16,6 +16,7 @@ namespace {
 
 enum class Stage { Ready, Waiting, Go, Summary, Invalid };
 enum class Palette { RedGreen, YellowBlue };
+enum class Language { English, Chinese };
 
 struct TestState {
     static constexpr size_t kTrialCount = 5;
@@ -23,6 +24,7 @@ struct TestState {
 
     Stage stage{Stage::Ready};
     Palette palette{Palette::RedGreen};
+    Language language{Language::English};
     Uint64 target_time_ns{};
     std::array<Uint64, kTrialCount> reactions_ns{};
     size_t reaction_count{};
@@ -93,6 +95,46 @@ const char* palette_name(Palette palette) {
     return palette == Palette::RedGreen ? "RED -> GREEN" : "YELLOW -> BLUE";
 }
 
+const char* stage_name(Stage stage, Language language) {
+    if (language == Language::Chinese) {
+        switch (stage) {
+        case Stage::Ready: return "开始五次反应测试";
+        case Stage::Waiting: return "等待目标颜色...";
+        case Stage::Go: return "立即按键或点击！";
+        case Stage::Summary: return "五次测试结果 - 按键或点击重新开始";
+        case Stage::Invalid: return "本轮无效 - 从第一次重新开始";
+        }
+    }
+    switch (stage) {
+    case Stage::Ready: return "Start a five-trial reaction test";
+    case Stage::Waiting: return "Wait for the target color...";
+    case Stage::Go: return "CLICK OR PRESS NOW!";
+    case Stage::Summary: return "Five-trial results - press or click to restart";
+    case Stage::Invalid: return "Invalid round - restart from trial one";
+    }
+    return "";
+}
+
+bool is_reaction_key(SDL_Scancode scancode) {
+    return scancode == SDL_SCANCODE_Z || scancode == SDL_SCANCODE_X ||
+           scancode == SDL_SCANCODE_SPACE || scancode == SDL_SCANCODE_UP ||
+           scancode == SDL_SCANCODE_DOWN || scancode == SDL_SCANCODE_LEFT ||
+           scancode == SDL_SCANCODE_RIGHT;
+}
+
+bool held_for_trigger(Uint64 pressed_ns, Uint64 released_ns) {
+    return pressed_ns != 0 && released_ns >= pressed_ns &&
+           released_ns - pressed_ns >= TestState::kTimeoutNs;
+}
+
+void set_window_title(SDL_Window* window, const TestState& test, float refresh_hz, int vsync) {
+    char title[256];
+    std::snprintf(title, sizeof(title), "NekoBenchmark | %s | %.1f Hz | VSync: %s",
+                  stage_name(test.stage, test.language), refresh_hz,
+                  vsync == 0 ? "disabled" : "enabled/unknown");
+    SDL_SetWindowTitle(window, title);
+}
+
 void run_self_check() {
     const auto expect = [](bool condition) {
         if (!condition) {
@@ -125,6 +167,15 @@ void run_self_check() {
 
     test.palette = Palette::YellowBlue;
     expect(std::strcmp(palette_name(test.palette), "YELLOW -> BLUE") == 0);
+    test.language = Language::Chinese;
+    expect(std::strcmp(stage_name(Stage::Go, test.language), "立即按键或点击！") == 0);
+    expect(is_reaction_key(SDL_SCANCODE_UP));
+    expect(is_reaction_key(SDL_SCANCODE_DOWN));
+    expect(is_reaction_key(SDL_SCANCODE_LEFT));
+    expect(is_reaction_key(SDL_SCANCODE_RIGHT));
+    expect(!is_reaction_key(SDL_SCANCODE_A));
+    expect(held_for_trigger(100, 100 + TestState::kTimeoutNs));
+    expect(!held_for_trigger(100, 100 + TestState::kTimeoutNs - 1));
 }
 
 struct TextCache {
@@ -137,7 +188,6 @@ struct TextCache {
         float width{};
         float height{};
     };
-
     explicit TextCache(std::string font_path) : font_path_(std::move(font_path)) {}
 
     void draw_centered(SDL_Renderer* renderer, const char* text, float center_x, float y, float point_size,
@@ -446,13 +496,6 @@ float refresh_rate_for_window(SDL_Window* window) {
     return mode ? mode->refresh_rate : 0.0f;
 }
 
-bool is_reaction_input(const SDL_Event& event) {
-    return (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) ||
-           (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
-            (event.key.scancode == SDL_SCANCODE_Z || event.key.scancode == SDL_SCANCODE_X ||
-             event.key.scancode == SDL_SCANCODE_SPACE));
-}
-
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -521,6 +564,7 @@ int main(int argc, char* argv[]) {
     std::uniform_int_distribution<Uint64> wait_ns(1'000'000'000ULL, 4'000'000'000ULL);
 
     TestState test;
+    std::array<Uint64, SDL_SCANCODE_COUNT> key_down_ns{};
     bool running = true;
     while (running) {
         SDL_Event event;
@@ -534,8 +578,12 @@ int main(int argc, char* argv[]) {
                 test.palette = test.palette == Palette::RedGreen ? Palette::YellowBlue : Palette::RedGreen;
                 continue;
             }
-            if (is_reaction_input(event)) {
-                const Uint64 timestamp = event.common.timestamp;
+            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.scancode == SDL_SCANCODE_L) {
+                test.language = test.language == Language::English ? Language::Chinese : Language::English;
+                continue;
+            }
+
+            const auto trigger_reaction = [&](Uint64 timestamp) {
                 if (test.stage == Stage::Ready || test.stage == Stage::Invalid || test.stage == Stage::Summary) {
                     test.start(timestamp, wait_ns(random));
                 } else {
@@ -544,11 +592,25 @@ int main(int argc, char* argv[]) {
                         test.begin_trial(timestamp, wait_ns(random));
                     }
                 }
+            };
+
+            if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
+                trigger_reaction(event.common.timestamp);
+            } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && is_reaction_key(event.key.scancode)) {
+                key_down_ns[static_cast<size_t>(event.key.scancode)] = event.common.timestamp;
+                trigger_reaction(event.common.timestamp);
+            } else if (event.type == SDL_EVENT_KEY_UP && is_reaction_key(event.key.scancode)) {
+                Uint64& pressed_ns = key_down_ns[static_cast<size_t>(event.key.scancode)];
+                if (held_for_trigger(pressed_ns, event.common.timestamp)) {
+                    trigger_reaction(event.common.timestamp);
+                }
+                pressed_ns = 0;
             }
         }
 
         test.update(SDL_GetTicksNS());
         const float refresh_hz = refresh_rate_for_window(window);
+        set_window_title(window, test, refresh_hz, vsync);
         render(renderer, text, test, refresh_hz, vsync_disabled);
     }
 
