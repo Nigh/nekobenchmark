@@ -41,14 +41,21 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
-      - name: Prepare Unix binary
-        if: runner.os != 'Windows'
+      - name: Prepare Linux binary
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           mkdir -p dist/package
           cp build/nekobenchmark dist/package/
           cp build/MapleMono-Regular.ttf build/NotoSansCJKsc-Regular.otf \
             assets/MapleMono-OFL.txt build/NotoSansCJK-OFL.txt dist/package/
+          (cd dist/package && zip -r ../${{ matrix.asset }} .)
+      - name: Prepare macOS app bundle
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p dist/package
+          cp -R build/nekobenchmark.app dist/package/
           (cd dist/package && zip -r ../${{ matrix.asset }} .)
       - name: Prepare Windows binary
         if: runner.os == 'Windows'

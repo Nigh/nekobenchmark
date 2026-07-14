@@ -78,21 +78,43 @@ FetchContent_Populate(SDL_ttf)
 file(COPY "${freetype_SOURCE_DIR}/" DESTINATION "${sdl_ttf_SOURCE_DIR}/external/freetype")
 add_subdirectory("${sdl_ttf_SOURCE_DIR}" "${sdl_ttf_BINARY_DIR}")
 
-add_executable(nekobenchmark src/main.cpp)
+if(WIN32)
+    # This is a graphical SDL application; the WIN32 subsystem prevents a console
+    # window from appearing when it is launched from Explorer.
+    add_executable(nekobenchmark WIN32 src/main.cpp)
+elseif(APPLE)
+    # A bundle launches as a native macOS app instead of through Terminal.
+    add_executable(nekobenchmark MACOSX_BUNDLE src/main.cpp)
+    set_source_files_properties(
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/MapleMono-Regular.ttf"
+        "${NOTO_SANS_CJK_FONT}"
+        "${NOTO_SANS_CJK_LICENSE}"
+        PROPERTIES MACOSX_PACKAGE_LOCATION Resources
+    )
+    target_sources(nekobenchmark PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/MapleMono-Regular.ttf"
+        "${NOTO_SANS_CJK_FONT}"
+        "${NOTO_SANS_CJK_LICENSE}"
+    )
+else()
+    add_executable(nekobenchmark src/main.cpp)
+endif()
 target_compile_features(nekobenchmark PRIVATE cxx_std_20)
 target_link_libraries(nekobenchmark PRIVATE SDL3::SDL3-static SDL3_ttf::SDL3_ttf-static)
 
-add_custom_command(TARGET nekobenchmark POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets/MapleMono-Regular.ttf"
-        "$<TARGET_FILE_DIR:nekobenchmark>/MapleMono-Regular.ttf"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${NOTO_SANS_CJK_FONT}"
-        "$<TARGET_FILE_DIR:nekobenchmark>/NotoSansCJKsc-Regular.otf"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${NOTO_SANS_CJK_LICENSE}"
-        "$<TARGET_FILE_DIR:nekobenchmark>/NotoSansCJK-OFL.txt"
-)
+if(NOT APPLE)
+    add_custom_command(TARGET nekobenchmark POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets/MapleMono-Regular.ttf"
+            "$<TARGET_FILE_DIR:nekobenchmark>/MapleMono-Regular.ttf"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${NOTO_SANS_CJK_FONT}"
+            "$<TARGET_FILE_DIR:nekobenchmark>/NotoSansCJKsc-Regular.otf"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${NOTO_SANS_CJK_LICENSE}"
+            "$<TARGET_FILE_DIR:nekobenchmark>/NotoSansCJK-OFL.txt"
+    )
+endif()
 
 if(MSVC)
     target_compile_options(nekobenchmark PRIVATE /W4 /permissive-)
@@ -101,4 +123,4 @@ else()
 endif()
 
 enable_testing()
-add_test(NAME self_check COMMAND nekobenchmark --self-test)
+add_test(NAME self_check COMMAND $<TARGET_FILE:nekobenchmark> --self-test)

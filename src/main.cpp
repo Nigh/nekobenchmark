@@ -115,7 +115,7 @@ const char* stage_name(Stage stage, Language language) {
         case Stage::Ready: return "开始五次反应测试";
         case Stage::Waiting: return "等待目标颜色...";
         case Stage::Go: return "立即按键或点击！";
-        case Stage::Summary: return "五次测试结果 - 按键或点击重新开始";
+        case Stage::Summary: return "五次测试结果 - 按 R 键重新开始";
         case Stage::Invalid: return "本轮无效 - 从第一次重新开始";
         case Stage::AwaitingNextTrial: return "按键开始下一次测试";
         }
@@ -124,7 +124,7 @@ const char* stage_name(Stage stage, Language language) {
     case Stage::Ready: return "Start a five-trial reaction test";
     case Stage::Waiting: return "Wait for the target color...";
     case Stage::Go: return "CLICK OR PRESS NOW!";
-    case Stage::Summary: return "Five-trial results - press or click to restart";
+    case Stage::Summary: return "Five-trial results - press R to restart";
     case Stage::Invalid: return "Invalid round - restart from trial one";
     case Stage::AwaitingNextTrial: return "Press a key to begin the next trial";
     }
@@ -195,6 +195,7 @@ void run_self_check() {
     expect(is_reaction_key(SDL_SCANCODE_LEFT));
     expect(is_reaction_key(SDL_SCANCODE_RIGHT));
     expect(!is_reaction_key(SDL_SCANCODE_A));
+    expect(!is_reaction_key(SDL_SCANCODE_R));
     expect(held_for_trigger(100, 100 + TestState::kTimeoutNs));
     expect(!held_for_trigger(100, 100 + TestState::kTimeoutNs - 1));
 }
@@ -496,8 +497,8 @@ void render(SDL_Renderer* renderer, TextCache& text, const TestState& test, floa
         text.draw_centered(renderer, display_label, card_x + column_width * 2.5f + gap * 2.0f,
                            display_y + display_metrics.height + kMetricGap, 12.0f, kMuted);
         draw_card(renderer, {center_x - 258.0f, 396.0f, 516.0f, 49.0f}, card_fill, card_border, 12.0f);
-        text.draw_centered(renderer, localized(test.language, "Press [Z], [X], [Space], or [LMB] to try again",
-                                                "按 [Z]、[X]、[空格] 或 [鼠标左键] 再试一次"),
+        text.draw_centered(renderer, localized(test.language, "Press [R] to restart",
+                                                "按 [R] 键重新开始"),
                            center_x, 412.0f, 13.0f, kMuted);
     } else {
         draw_card(renderer, {center_x - 250.0f, 116.0f, 500.0f, 142.0f}, card_fill, card_border);
@@ -669,9 +670,14 @@ int main(int argc, char* argv[]) {
                 test.language = test.language == Language::English ? Language::Chinese : Language::English;
                 continue;
             }
+            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.scancode == SDL_SCANCODE_R &&
+                test.stage == Stage::Summary) {
+                test.start(event.common.timestamp, wait_ns(random));
+                continue;
+            }
 
             const auto trigger_reaction = [&](Uint64 timestamp, bool release_trigger) {
-                if (test.stage == Stage::Ready || test.stage == Stage::Invalid || test.stage == Stage::Summary) {
+                if (test.stage == Stage::Ready || test.stage == Stage::Invalid) {
                     test.start(timestamp, wait_ns(random));
                 } else if (test.stage == Stage::AwaitingNextTrial) {
                     test.begin_trial(timestamp, wait_ns(random));
