@@ -2,7 +2,13 @@ name: Export and release
 
 on:
   push:
-    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to create
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -67,8 +73,9 @@ jobs:
         env:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          gh release create --repo "$GH_REPO" "build-${GITHUB_RUN_NUMBER}" release-assets/* \
+          gh release create --repo "$GH_REPO" "$RELEASE_TAG" release-assets/* \
             --target "$GITHUB_SHA" \
-            --title "Build ${GITHUB_RUN_NUMBER}" \
+            --title "$RELEASE_TAG" \
             --notes "Automated cross-platform binaries for commit ${GITHUB_SHA}."
