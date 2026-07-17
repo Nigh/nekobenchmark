@@ -1,0 +1,61 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/app.gd" id="1_app"]
+[ext_resource type="PackedScene" path="res://scenes/corner_watch.tscn" id="2_corner"]
+
+[node name="Main" type="Node"]
+script = ExtResource("1_app")
+
+[node name="Menu" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="ColorReaction" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="CornerWatch" parent="." instance=ExtResource("2_corner")]
+
+[node name="Summary" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="TrialList" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 260.0
+offset_bottom = 720.0
+mouse_filter = 2
+
+[node name="FlightScore" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="HUD" type="Control" parent="CanvasLayer"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+grow_horizontal = 2
+grow_vertical = 2
