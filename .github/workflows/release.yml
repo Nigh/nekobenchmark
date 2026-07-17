@@ -1,8 +1,14 @@
-name: Build and release
+name: Export and release
 
 on:
   push:
-    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to create
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -14,56 +20,40 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux x64
+          - name: Linux
             os: ubuntu-latest
             asset: nekobenchmark-linux-x64.zip
+            preset: Linux
+            binary: nekobenchmark.x86_64
           - name: Windows x64
             os: windows-latest
             asset: nekobenchmark-windows-x64.zip
+            preset: Windows
+            binary: nekobenchmark.exe
           - name: macOS x64
             os: macos-26-intel
             asset: nekobenchmark-macos-x64.zip
+            preset: macOS
+            binary: NekoBenchmark.zip
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-      - name: Install Linux SDL build dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libx11-dev libxext-dev libxrandr-dev libxcursor-dev \
-            libxi-dev libxfixes-dev libxss-dev libxtst-dev \
-            libwayland-dev libxkbcommon-dev libdecor-0-dev \
-            libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev libvulkan-dev
-      - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-      - name: Build
-        run: cmake --build build --config Release --parallel
-      - name: Test
-        run: ctest --test-dir build -C Release --output-on-failure
-      - name: Prepare Linux binary
-        if: runner.os == 'Linux'
+      - name: Set up Godot
+        uses: firebelley/setup-godot@v1
+        with:
+          godot-version: 4.4.1
+          include-export-templates: true
+      - name: Run state-machine tests
+        run: godot --headless --path . --script tests/reaction_state_test.gd
+      - name: Export project
+        run: godot --headless --path . --export-release "${{ matrix.preset }}"
+      - name: Package export
         shell: bash
         run: |
-          mkdir -p dist/package
-          cp build/nekobenchmark dist/package/
-          cp build/MapleMono-Regular.ttf build/NotoSansCJKsc-Regular.otf \
-            assets/MapleMono-OFL.txt build/NotoSansCJK-OFL.txt dist/package/
-          (cd dist/package && zip -r ../${{ matrix.asset }} .)
-      - name: Prepare macOS app bundle
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          mkdir -p dist/package
-          cp -R build/nekobenchmark.app dist/package/
-          (cd dist/package && zip -r ../${{ matrix.asset }} .)
-      - name: Prepare Windows binary
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force dist/package
-          Copy-Item build/Release/nekobenchmark.exe,build/Release/MapleMono-Regular.ttf,build/Release/NotoSansCJKsc-Regular.otf,assets/MapleMono-OFL.txt,build/Release/NotoSansCJK-OFL.txt dist/package/
-          Compress-Archive -Path dist/package/* -DestinationPath dist/${{ matrix.asset }}
+          mkdir -p package
+          cp "dist/${{ matrix.binary }}" package/
+          cp assets/MapleMono-OFL.txt package/
+          (cd package && zip -r "../dist/${{ matrix.asset }}" .)
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
@@ -83,8 +73,9 @@ jobs:
         env:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          gh release create --repo "$GH_REPO" "build-${GITHUB_RUN_NUMBER}" release-assets/* \
+          gh release create --repo "$GH_REPO" "$RELEASE_TAG" release-assets/* \
             --target "$GITHUB_SHA" \
-            --title "Build ${GITHUB_RUN_NUMBER}" \
+            --title "$RELEASE_TAG" \
             --notes "Automated cross-platform binaries for commit ${GITHUB_SHA}."

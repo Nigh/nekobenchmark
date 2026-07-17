@@ -1,7 +1,11 @@
-# CMake build trees
-/build*/
+# Godot editor and import artifacts
+/.godot/
+*.import
 
-# IDE and editor metadata
+# Export packages
+/dist/
+
+# IDE metadata
 /.idea/
 /.vscode/
 
