@@ -18,15 +18,16 @@ The bundled Maple Mono font is used directly as a Godot resource.
   then times out. After a target round ends, it greys, falls, and fades before
   it is removed.
 - `OSU` is a 2D sequence test: five rounds, each with six non-overlapping
-  numbered circles placed at random. The player must hit them in order 1–6.
-  Mouse clicks must land on the next expected circle; Space, Z, X, and arrow
-  keys advance the next expected circle. Score is first valid hit to last hit.
-  A wrong click (miss or out of order) invalidates the whole five-round set.
+  numbered circular targets placed at random. The player must hit them in order
+  1–6. Left mouse and react keys (Space, Z, X, arrows) only count when the
+  cursor is on the next expected circle. Score is first valid hit to last hit.
+  A miss or out-of-order hit invalidates the whole five-round set.
 - `Sphere Aim` is a 3D clear-out test: five rounds. After a random 1–3 second
-  wait, six spheres appear at once. The player aims with limited mouse look and
-  fires with left mouse using a center raycast. Score is appear-frame to last
-  hit. Early fire, or failing to clear all targets within six seconds,
-  invalidates the whole set. Fires closer than 150 ms apart are ignored.
+  wait, six non-overlapping spheres appear at once. The player aims with
+  limited mouse look and fires with left mouse or react keys using a center
+  raycast. Score is appear-frame to last hit. Early fire, or failing to clear
+  all targets within six seconds, invalidates the whole set. Fires closer than
+  150 ms apart are ignored.
 - Color Reaction and Corner Watch use a random 1–4 second delay, five trials, a
   one-second timeout, and false-start invalidation. Each valid non-final trial
   immediately begins its next random delay. `Time.get_ticks_usec()` measures

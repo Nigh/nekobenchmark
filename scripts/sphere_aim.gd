@@ -9,7 +9,7 @@ const YAW_MAX := PI * 0.5
 const LOOK_SENSITIVITY := 0.006
 const TARGET_COUNT := 6
 const SPHERE_RADIUS := 0.35
-const MIN_SEPARATION := 1.1
+const MIN_SEPARATION := SPHERE_RADIUS * 2.0 + 0.45
 
 var active := false
 var yaw := 0.0
@@ -47,25 +47,34 @@ func spawn_targets() -> void:
 	clear_targets()
 	var positions: Array[Vector3] = []
 	var attempts := 0
-	while positions.size() < TARGET_COUNT and attempts < 200:
+	while positions.size() < TARGET_COUNT and attempts < 800:
 		attempts += 1
 		var pos := Vector3(
 			rng.randf_range(-2.4, 2.4),
 			rng.randf_range(-0.2, 1.6),
 			rng.randf_range(-7.5, -4.5)
 		)
-		var ok := true
-		for other in positions:
-			if pos.distance_to(other) < MIN_SEPARATION:
-				ok = false
-				break
-		if ok:
+		if _fits(positions, pos):
 			positions.append(pos)
+	# Guaranteed non-overlapping 2x3 lattice if RNG packing fails.
+	if positions.size() < TARGET_COUNT:
+		positions.clear()
+		for index in TARGET_COUNT:
+			var col: int = index % 3
+			var row: int = int(index / 3)
+			positions.append(Vector3(-1.6 + col * 1.6, 0.2 + row * 1.1, -6.0))
 	for index in positions.size():
 		var body := _make_sphere(positions[index], index)
 		targets_root.add_child(body)
 		target_bodies.append(body)
 		alive.append(true)
+
+
+func _fits(existing: Array[Vector3], pos: Vector3) -> bool:
+	for other in existing:
+		if pos.distance_to(other) < MIN_SEPARATION:
+			return false
+	return true
 
 
 func fire_ray() -> int:

@@ -2,16 +2,24 @@ extends SceneTree
 
 const Osu := preload("res://scripts/osu_state.gd")
 const Sphere := preload("res://scripts/sphere_state.gd")
+const SphereAimScr := preload("res://scripts/sphere_aim.gd")
 const Scores := preload("res://scripts/score_store.gd")
 
 
 func _init() -> void:
 	_test_osu()
 	_test_sphere()
+	_test_sphere_separation()
 	var result: Dictionary = Scores.statistics([100_000, 200_000, 300_000, 400_000, 500_000])
 	assert(is_equal_approx(result.median, 300.0))
 	print("sequence_state_test: PASS")
 	quit()
+
+
+func _test_sphere_separation() -> void:
+	var min_sep: float = SphereAimScr.SPHERE_RADIUS * 2.0 + 0.45
+	assert(is_equal_approx(SphereAimScr.MIN_SEPARATION, min_sep))
+	assert(SphereAimScr.MIN_SEPARATION > SphereAimScr.SPHERE_RADIUS * 2.0)
 
 
 func _test_osu() -> void:
