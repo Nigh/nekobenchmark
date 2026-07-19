@@ -1,6 +1,7 @@
 extends SceneTree
 
-## Drive Main through OSU and Sphere Aim round start without a human.
+const OsuState = preload("res://scripts/osu_state.gd")
+const SphereState = preload("res://scripts/sphere_state.gd")
 
 
 func _initialize() -> void:
@@ -31,7 +32,6 @@ func _run() -> void:
 	await process_frame
 	var sphere_state = app.get("sphere_state")
 	assert(int(sphere_state.get("stage")) == SphereState.Stage.WAITING)
-	# Jump wait.
 	sphere_state.set("deadline_us", Time.get_ticks_usec())
 	await process_frame
 	await process_frame

@@ -1,5 +1,13 @@
 extends Node
 
+# ponytail: preload instead of class_name so parse works before .godot class cache exists.
+const ReactionState = preload("res://scripts/reaction_state.gd")
+const OsuState = preload("res://scripts/osu_state.gd")
+const SphereState = preload("res://scripts/sphere_state.gd")
+const ScoreStore = preload("res://scripts/score_store.gd")
+const CornerWatch = preload("res://scripts/corner_watch.gd")
+const SphereAim = preload("res://scripts/sphere_aim.gd")
+
 const INK := Color("#ebf0f9")
 const MUTED := Color("#97a6bd")
 const ACCENT := Color("#7790ff")
@@ -17,10 +25,10 @@ const OSU_PAD := 12.0
 @onready var flight_score_layer: Control = $FlightScore
 
 var rng := RandomNumberGenerator.new()
-var state := ReactionState.new()
-var osu_state := OsuState.new()
-var sphere_state := SphereState.new()
-var scores := ScoreStore.new()
+var state: ReactionState = ReactionState.new()
+var osu_state: OsuState = OsuState.new()
+var sphere_state: SphereState = SphereState.new()
+var scores: ScoreStore = ScoreStore.new()
 var page := ""
 var color_background: ColorRect
 var color_title: Label
@@ -206,9 +214,9 @@ func _handle_osu_input(event: InputEvent) -> void:
 		return
 	if osu_state.stage != OsuState.Stage.ACTIVE:
 		return
-	var samples_before := osu_state.reactions_us.size()
+	var samples_before: int = osu_state.reactions_us.size()
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		var hit_index := _osu_circle_at(osu_page.get_local_mouse_position())
+		var hit_index: int = _osu_circle_at(osu_page.get_local_mouse_position())
 		if hit_index + 1 == osu_state.expected:
 			osu_state.hit_next(now)
 			_mark_osu_hit(hit_index)
@@ -216,13 +224,13 @@ func _handle_osu_input(event: InputEvent) -> void:
 			osu_state.miss()
 			_clear_osu_circles()
 	elif _keyboard_react(event):
-		var hit_index := osu_state.expected - 1
+		var hit_index: int = osu_state.expected - 1
 		osu_state.hit_next(now)
 		_mark_osu_hit(hit_index)
 	else:
 		return
 	if osu_state.reactions_us.size() > samples_before:
-		var new_sample_index := osu_state.reactions_us.size() - 1
+		var new_sample_index: int = osu_state.reactions_us.size() - 1
 		_show_score_flight(new_sample_index, osu_state.reactions_us[new_sample_index])
 		_clear_osu_circles()
 	if osu_state.stage == OsuState.Stage.INVALID:
@@ -243,18 +251,18 @@ func _handle_sphere_input(event: InputEvent) -> void:
 			sphere_aim.clear_targets()
 			_refresh_project()
 		return
-	var samples_before := sphere_state.reactions_us.size()
+	var samples_before: int = sphere_state.reactions_us.size()
 	if not sphere_state.try_fire(now):
 		return
 	if sphere_state.stage == SphereState.Stage.INVALID:
 		sphere_aim.clear_targets()
 		_refresh_project()
 		return
-	var hit := sphere_aim.fire_ray()
+	var hit: int = sphere_aim.fire_ray()
 	if hit >= 0:
 		sphere_state.register_hit(now)
 	if sphere_state.reactions_us.size() > samples_before:
-		var new_sample_index := sphere_state.reactions_us.size() - 1
+		var new_sample_index: int = sphere_state.reactions_us.size() - 1
 		_show_score_flight(new_sample_index, sphere_state.reactions_us[new_sample_index])
 		sphere_aim.clear_targets()
 	_refresh_project()
@@ -594,8 +602,8 @@ func _spawn_osu_circles() -> void:
 	if osu_centers.size() < OsuState.TARGETS:
 		osu_centers.clear()
 		for index in OsuState.TARGETS:
-			var col := index % 3
-			var row := index / 3
+			var col: int = index % 3
+			var row: int = int(index / 3)
 			osu_centers.append(Vector2(400.0 + col * 200.0, 260.0 + row * 180.0))
 	for index in osu_centers.size():
 		var circle := _make_osu_circle(index + 1, osu_centers[index])
