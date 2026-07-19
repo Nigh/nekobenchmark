@@ -51,6 +51,7 @@ Maple Mono 以 SIL Open Font License 1.1 随发布包分发。
 ```sh
 godot --headless --path . --script tests/reaction_state_test.gd
 godot --headless --path . --script tests/sequence_state_test.gd
+godot --headless --path . --script tests/playthrough_test.gd
 godot --headless --path . --editor --quit
 ```
 

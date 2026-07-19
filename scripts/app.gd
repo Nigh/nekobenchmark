@@ -128,6 +128,7 @@ func show_menu() -> void:
 	flight_score_layer.hide()
 	corner_watch.set_active(false)
 	sphere_aim.set_active(false)
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	$CanvasLayer/HUD.hide()
 	_update_best_scores()
 
@@ -416,14 +417,21 @@ func _keyboard_react(event: InputEvent) -> bool:
 
 
 func _ensure_input_actions() -> void:
+	if not InputMap.has_action("react"):
+		InputMap.add_action("react")
+	if not InputMap.has_action("fire"):
+		InputMap.add_action("fire")
 	for keycode in [KEY_SPACE, KEY_Z, KEY_X, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT]:
 		var event := InputEventKey.new()
 		event.keycode = keycode
-		InputMap.action_add_event("react", event)
+		if not InputMap.action_has_event("react", event):
+			InputMap.action_add_event("react", event)
 	var fire := InputEventMouseButton.new()
 	fire.button_index = MOUSE_BUTTON_LEFT
-	InputMap.action_add_event("react", fire)
-	InputMap.action_add_event("fire", fire)
+	if not InputMap.action_has_event("react", fire):
+		InputMap.action_add_event("react", fire)
+	if not InputMap.action_has_event("fire", fire):
+		InputMap.action_add_event("fire", fire)
 
 
 func _build_menu() -> void:
@@ -568,7 +576,7 @@ func _spawn_osu_circles() -> void:
 	var min_dist := OSU_RADIUS * 2.0 + OSU_PAD
 	var area := Rect2(280, 160, 720, 460)
 	var attempts := 0
-	while osu_centers.size() < OsuState.TARGETS and attempts < 400:
+	while osu_centers.size() < OsuState.TARGETS and attempts < 800:
 		attempts += 1
 		var center := Vector2(
 			rng.randf_range(area.position.x + OSU_RADIUS, area.end.x - OSU_RADIUS),
@@ -582,7 +590,15 @@ func _spawn_osu_circles() -> void:
 		if not ok:
 			continue
 		osu_centers.append(center)
-		var circle := _make_osu_circle(osu_centers.size(), center)
+	# ponytail: if RNG packing fails, fall back to a fixed 2x3 grid so the round is always playable.
+	if osu_centers.size() < OsuState.TARGETS:
+		osu_centers.clear()
+		for index in OsuState.TARGETS:
+			var col := index % 3
+			var row := index / 3
+			osu_centers.append(Vector2(400.0 + col * 200.0, 260.0 + row * 180.0))
+	for index in osu_centers.size():
+		var circle := _make_osu_circle(index + 1, osu_centers[index])
 		osu_circles_root.add_child(circle)
 		osu_circle_nodes.append(circle)
 

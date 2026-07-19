@@ -32,13 +32,15 @@ func _ready() -> void:
 
 func set_active(value: bool) -> void:
 	active = value
+	visible = value
 	defeat_elapsed = -1.0
 	enemy.visible = false
 	yaw = -0.22
 	pitch = -0.02
 	_apply_camera_rotation()
 	camera.current = value
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if active else Input.MOUSE_MODE_VISIBLE
+	if value:
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
 func begin_target(from_left: bool) -> void:

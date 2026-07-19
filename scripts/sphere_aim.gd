@@ -26,17 +26,19 @@ func _ready() -> void:
 
 func set_active(value: bool) -> void:
 	active = value
+	visible = value
 	clear_targets()
 	yaw = 0.0
 	pitch = -0.05
 	_apply_camera_rotation()
 	camera.current = value
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if value else Input.MOUSE_MODE_VISIBLE
+	if value:
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
 func clear_targets() -> void:
 	for child in targets_root.get_children():
-		child.queue_free()
+		child.free()
 	target_bodies.clear()
 	alive.clear()
 

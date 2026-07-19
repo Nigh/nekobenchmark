@@ -39,7 +39,8 @@ The bundled Maple Mono font is used directly as a Godot resource.
 - The best completed median for each project is atomically saved as
   `user://scores.txt`, using the `color`, `shooter`, `osu`, and `spheres` keys.
 - Run `godot --headless --path . --script tests/reaction_state_test.gd`,
-  `godot --headless --path . --script tests/sequence_state_test.gd`, and
+  `godot --headless --path . --script tests/sequence_state_test.gd`,
+  `godot --headless --path . --script tests/playthrough_test.gd`, and
   `godot --headless --path . --editor --quit` to verify changes. Use the
   project export presets for release packages.
 
