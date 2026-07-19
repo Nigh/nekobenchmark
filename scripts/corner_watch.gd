@@ -37,6 +37,7 @@ func set_active(value: bool) -> void:
 	yaw = -0.22
 	pitch = -0.02
 	_apply_camera_rotation()
+	camera.current = value
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if active else Input.MOUSE_MODE_VISIBLE
 
 

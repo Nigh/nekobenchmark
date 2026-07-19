@@ -6,6 +6,8 @@ const TEMP_PATH := "user://scores.txt.tmp"
 
 var color := 0.0
 var shooter := 0.0
+var osu := 0.0
+var spheres := 0.0
 
 
 func load_scores() -> void:
@@ -21,20 +23,46 @@ func load_scores() -> void:
 		var value := words[1].to_float()
 		if value < 0.0:
 			continue
-		if words[0] == "color":
-			color = value
-		elif words[0] == "shooter":
-			shooter = value
+		match words[0]:
+			"color":
+				color = value
+			"shooter":
+				shooter = value
+			"osu":
+				osu = value
+			"spheres":
+				spheres = value
+
+
+func get_best(project: String) -> float:
+	match project:
+		"color":
+			return color
+		"shooter":
+			return shooter
+		"osu":
+			return osu
+		"spheres":
+			return spheres
+		_:
+			return 0.0
 
 
 func update(project: String, median_ms: float) -> bool:
-	var current := color if project == "color" else shooter
+	var current := get_best(project)
 	if not is_new_best(current, median_ms):
 		return false
-	if project == "color":
-		color = median_ms
-	else:
-		shooter = median_ms
+	match project:
+		"color":
+			color = median_ms
+		"shooter":
+			shooter = median_ms
+		"osu":
+			osu = median_ms
+		"spheres":
+			spheres = median_ms
+		_:
+			return false
 	return save_scores()
 
 
@@ -46,7 +74,9 @@ func save_scores() -> bool:
 	var file := FileAccess.open(TEMP_PATH, FileAccess.WRITE)
 	if file == null:
 		return false
-	file.store_string("color %.1f\nshooter %.1f\n" % [color, shooter])
+	file.store_string(
+		"color %.1f\nshooter %.1f\nosu %.1f\nspheres %.1f\n" % [color, shooter, osu, spheres]
+	)
 	file.close()
 	var error := DirAccess.rename_absolute(TEMP_PATH, SCORE_PATH)
 	return error == OK
