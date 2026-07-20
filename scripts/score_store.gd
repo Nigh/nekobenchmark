@@ -3,11 +3,13 @@ extends RefCounted
 
 const SCORE_PATH := "user://scores.txt"
 const TEMP_PATH := "user://scores.txt.tmp"
+const Camera3DConfig = preload("res://scripts/camera_3d_config.gd")
 
 var color := 0.0
 var shooter := 0.0
 var osu := 0.0
 var spheres := 0.0
+var look_sens := Camera3DConfig.LOOK_SENS_DEFAULT
 
 
 func load_scores() -> void:
@@ -32,6 +34,8 @@ func load_scores() -> void:
 				osu = value
 			"spheres":
 				spheres = value
+			"look_sens":
+				look_sens = Camera3DConfig.clamp_look_sensitivity(value)
 
 
 func get_best(project: String) -> float:
@@ -66,6 +70,14 @@ func update(project: String, median_ms: float) -> bool:
 	return save_scores()
 
 
+func set_look_sensitivity(value: float) -> bool:
+	var clamped := Camera3DConfig.clamp_look_sensitivity(value)
+	if is_equal_approx(look_sens, clamped):
+		return true
+	look_sens = clamped
+	return save_scores()
+
+
 static func is_new_best(current: float, candidate: float) -> bool:
 	return candidate >= 0.0 and (current == 0.0 or candidate < current)
 
@@ -75,7 +87,8 @@ func save_scores() -> bool:
 	if file == null:
 		return false
 	file.store_string(
-		"color %.1f\nshooter %.1f\nosu %.1f\nspheres %.1f\n" % [color, shooter, osu, spheres]
+		"color %.1f\nshooter %.1f\nosu %.1f\nspheres %.1f\nlook_sens %.2f\n"
+		% [color, shooter, osu, spheres, look_sens]
 	)
 	file.close()
 	var error := DirAccess.rename_absolute(TEMP_PATH, SCORE_PATH)
