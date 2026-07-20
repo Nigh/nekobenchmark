@@ -1,17 +1,24 @@
 class_name SphereAim
 extends Node3D
 
+const Camera3DConfig = preload("res://scripts/camera_3d_config.gd")
+const PracticeRoom = preload("res://scripts/practice_room.gd")
+
 @onready var camera: Camera3D = $Camera3D
 @onready var targets_root: Node3D = $Targets
 
 const YAW_MIN := -PI * 0.5
 const YAW_MAX := PI * 0.5
-const LOOK_SENSITIVITY := 0.006
 const TARGET_COUNT := 6
 const SPHERE_RADIUS := 0.35
+const HIT_RADIUS_SCALE := 1.1
 const MIN_SEPARATION := SPHERE_RADIUS * 2.0 + 0.45
+const SPREAD_FOV_DEG := 60.0
+const DEPTH_MIN := 8.0
+const DEPTH_MAX := 16.0
 
 var active := false
+var look_sensitivity := Camera3DConfig.LOOK_SENS_DEFAULT
 var yaw := 0.0
 var pitch := -0.05
 var rng := RandomNumberGenerator.new()
@@ -21,7 +28,13 @@ var alive: Array[bool] = []
 
 func _ready() -> void:
 	rng.randomize()
+	PracticeRoom.build(self)
+	Camera3DConfig.apply(camera)
 	_apply_camera_rotation()
+
+
+func set_look_sensitivity(value: float) -> void:
+	look_sensitivity = Camera3DConfig.clamp_look_sensitivity(value)
 
 
 func set_active(value: bool) -> void:
@@ -47,22 +60,32 @@ func spawn_targets() -> void:
 	clear_targets()
 	var positions: Array[Vector3] = []
 	var attempts := 0
-	while positions.size() < TARGET_COUNT and attempts < 800:
+	var half := deg_to_rad(SPREAD_FOV_DEG * 0.5)
+	while positions.size() < TARGET_COUNT and attempts < 1600:
 		attempts += 1
-		var pos := Vector3(
-			rng.randf_range(-2.4, 2.4),
-			rng.randf_range(-0.2, 1.6),
-			rng.randf_range(-7.5, -4.5)
-		)
-		if _fits(positions, pos):
+		var ax := rng.randf_range(-half, half)
+		# Bias upward so balls stay above the floor inside the room.
+		var ay := rng.randf_range(-half * 0.35, half)
+		if sqrt(ax * ax + ay * ay) > half:
+			continue
+		var depth := rng.randf_range(DEPTH_MIN, DEPTH_MAX)
+		var pos := _world_from_view(ax, ay, depth)
+		if _valid_target(positions, pos):
 			positions.append(pos)
-	# Guaranteed non-overlapping 2x3 lattice if RNG packing fails.
 	if positions.size() < TARGET_COUNT:
 		positions.clear()
 		for index in TARGET_COUNT:
 			var col: int = index % 3
 			var row: int = int(index / 3)
-			positions.append(Vector3(-1.6 + col * 1.6, 0.2 + row * 1.1, -6.0))
+			var ax := lerpf(-half * 0.75, half * 0.75, float(col) / 2.0)
+			var ay := lerpf(-half * 0.15, half * 0.65, float(row))
+			var depth := lerpf(DEPTH_MIN + 1.0, DEPTH_MAX - 1.0, float(index) / float(TARGET_COUNT - 1))
+			var pos := _world_from_view(ax, ay, depth)
+			if not PracticeRoom.contains_point(pos, SPHERE_RADIUS + 0.05):
+				pos.y = clampf(pos.y, PracticeRoom.FLOOR_TOP + SPHERE_RADIUS + 0.15, PracticeRoom.CEILING_Y - SPHERE_RADIUS)
+				pos.x = clampf(pos.x, -PracticeRoom.HALF_X + SPHERE_RADIUS, PracticeRoom.HALF_X - SPHERE_RADIUS)
+				pos.z = clampf(pos.z, PracticeRoom.Z_FRONT + SPHERE_RADIUS, -DEPTH_MIN)
+			positions.append(pos)
 	for index in positions.size():
 		var body := _make_sphere(positions[index], index)
 		targets_root.add_child(body)
@@ -70,7 +93,14 @@ func spawn_targets() -> void:
 		alive.append(true)
 
 
-func _fits(existing: Array[Vector3], pos: Vector3) -> bool:
+func _world_from_view(yaw_rad: float, pitch_rad: float, depth: float) -> Vector3:
+	var local := Vector3(sin(yaw_rad) * cos(pitch_rad), sin(pitch_rad), -cos(yaw_rad) * cos(pitch_rad)).normalized()
+	return camera.global_position + camera.global_transform.basis * local * depth
+
+
+func _valid_target(existing: Array[Vector3], pos: Vector3) -> bool:
+	if not PracticeRoom.contains_point(pos, SPHERE_RADIUS + 0.1):
+		return false
 	for other in existing:
 		if pos.distance_to(other) < MIN_SEPARATION:
 			return false
@@ -78,31 +108,33 @@ func _fits(existing: Array[Vector3], pos: Vector3) -> bool:
 
 
 func fire_ray() -> int:
-	var space := camera.get_world_3d().direct_space_state
-	var from := camera.global_position
-	var to := from + -camera.global_transform.basis.z * 40.0
-	var query := PhysicsRayQueryParameters3D.create(from, to)
-	query.collide_with_areas = false
-	query.collide_with_bodies = true
-	var hit := space.intersect_ray(query)
-	if hit.is_empty():
-		return -1
-	var collider: Object = hit.collider
+	var origin := camera.global_position
+	var forward := -camera.global_transform.basis.z
+	var hit_r := SPHERE_RADIUS * HIT_RADIUS_SCALE
+	var hit_r2 := hit_r * hit_r
+	var best_index := -1
+	var best_depth := INF
 	for index in target_bodies.size():
-		if alive[index] and target_bodies[index] == collider:
-			_defeat(index)
-			return index
-	return -1
+		if not alive[index]:
+			continue
+		var center: Vector3 = target_bodies[index].global_position
+		var to_center := center - origin
+		var depth := to_center.dot(forward)
+		if depth < 0.0 or depth >= best_depth:
+			continue
+		var closest := origin + forward * depth
+		if closest.distance_squared_to(center) <= hit_r2:
+			best_depth = depth
+			best_index = index
+	if best_index >= 0:
+		_defeat(best_index)
+	return best_index
 
 
 func _defeat(index: int) -> void:
 	alive[index] = false
 	var body := target_bodies[index]
-	var mesh: MeshInstance3D = body.get_node("MeshInstance3D")
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(0.28, 0.3, 0.33, 1.0)
-	material.roughness = 0.9
-	mesh.material_override = material
+	body.visible = false
 	body.collision_layer = 0
 
 
@@ -132,8 +164,9 @@ func _make_sphere(position: Vector3, index: int) -> StaticBody3D:
 
 func _input(event: InputEvent) -> void:
 	if active and event is InputEventMouseMotion:
-		yaw = clampf(yaw - event.relative.x * LOOK_SENSITIVITY, YAW_MIN, YAW_MAX)
-		pitch -= event.relative.y * LOOK_SENSITIVITY
+		var sens := Camera3DConfig.look_radians_per_pixel(look_sensitivity)
+		yaw = clampf(yaw - event.relative.x * sens, YAW_MIN, YAW_MAX)
+		pitch -= event.relative.y * sens
 		_apply_camera_rotation()
 
 
