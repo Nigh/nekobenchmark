@@ -16,7 +16,7 @@ const MIN_SEPARATION := SPHERE_RADIUS * 2.0 + 0.45
 const SPREAD_FOV_DEG := 60.0
 const DEPTH_MIN := 8.0
 const DEPTH_MAX := 16.0
-const GATE_DEPTH := 12.0
+const GATE_Z := -8.0 # same fixed depth as SensLab TARGET_Z
 const GATE_COLOR := Color(0.22, 0.82, 0.38, 1.0)
 
 var active := false
@@ -63,7 +63,8 @@ func clear_targets() -> void:
 func spawn_gate() -> void:
 	clear_targets()
 	gate_active = true
-	var pos := _world_from_view(0.0, 0.0, GATE_DEPTH)
+	# Fixed world-center like SensLab, not camera-look relative.
+	var pos := Vector3(0.0, camera.position.y, GATE_Z)
 	if not PracticeRoom.contains_point(pos, SPHERE_RADIUS + 0.05):
 		pos.y = clampf(pos.y, PracticeRoom.FLOOR_TOP + SPHERE_RADIUS + 0.15, PracticeRoom.CEILING_Y - SPHERE_RADIUS)
 	var body := _make_sphere(pos, GATE_COLOR)

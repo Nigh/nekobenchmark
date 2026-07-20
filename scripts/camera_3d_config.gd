@@ -7,6 +7,7 @@ const BASE_LOOK_SENSITIVITY := 0.006
 const LOOK_SENS_MIN := 0.10
 const LOOK_SENS_MAX := 5.00
 const LOOK_SENS_STEP := 0.05
+const LOOK_SENS_FINE_STEP := 0.01
 const LOOK_SENS_DEFAULT := 1.0
 
 
