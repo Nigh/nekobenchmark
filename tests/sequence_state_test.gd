@@ -19,6 +19,7 @@ func _init() -> void:
 func _test_sphere_separation() -> void:
 	var min_sep: float = SphereAimScr.SPHERE_RADIUS * 2.0 + 0.45
 	assert(is_equal_approx(SphereAimScr.MIN_SEPARATION, min_sep))
+	assert(is_equal_approx(SphereAimScr.HIT_RADIUS_SCALE, 1.1))
 	assert(SphereAimScr.MIN_SEPARATION > SphereAimScr.SPHERE_RADIUS * 2.0)
 
 
