@@ -5,21 +5,25 @@ const ReactionState = preload("res://scripts/reaction_state.gd")
 const OsuState = preload("res://scripts/osu_state.gd")
 const SphereState = preload("res://scripts/sphere_state.gd")
 const ScoreStore = preload("res://scripts/score_store.gd")
+const Camera3DConfig = preload("res://scripts/camera_3d_config.gd")
 const CornerWatch = preload("res://scripts/corner_watch.gd")
 const SphereAim = preload("res://scripts/sphere_aim.gd")
+const SensLab = preload("res://scripts/sens_lab.gd")
 
 const INK := Color("#ebf0f9")
 const MUTED := Color("#97a6bd")
 const ACCENT := Color("#7790ff")
 const DARK := Color("#0b101e")
-const OSU_RADIUS := 40.0
-const OSU_PAD := 12.0
+const OSU_RADIUS := 48.0
+const OSU_SPACING := 360.0
+const OSU_FADE_SEC := 0.28
 
 @onready var menu: Control = $Menu
 @onready var color_reaction: Control = $ColorReaction
 @onready var osu_page: Control = $Osu
 @onready var corner_watch: CornerWatch = $CornerWatch
 @onready var sphere_aim: SphereAim = $SphereAim
+@onready var sens_lab: SensLab = $SensLab
 @onready var summary: Control = $Summary
 @onready var trial_list: Control = $TrialList
 @onready var flight_score_layer: Control = $FlightScore
@@ -47,15 +51,22 @@ var hud_dots: Label
 var hud_footer: Label
 var summary_text: Label
 var trial_rows: Array[Label] = []
+var live_timer: Label
 var flight_score: Label
 var score_flight: Tween
 var score_flight_active := false
 var menu_buttons: Array[Button] = []
+var sens_menu_button: Button
+var sens_slider_layer: Control
+var sens_slider: HSlider
+var sens_slider_label: Label
+var sens_slider_dragging := false
 
 
 func _ready() -> void:
 	rng.randomize()
 	scores.load_scores()
+	_apply_look_sensitivity()
 	_ensure_input_actions()
 	Input.use_accumulated_input = false
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
@@ -64,15 +75,19 @@ func _ready() -> void:
 	_build_color_page()
 	_build_osu_page()
 	_build_hud()
+	_build_sens_slider()
 	_build_summary()
 	_build_trial_list()
 	show_menu()
 
 
 func _process(_delta: float) -> void:
+	if page == "sens":
+		_sync_sens_alt_cursor()
 	if page.is_empty():
 		return
 	var now := Time.get_ticks_usec()
+	_update_live_trial_time(now)
 	if page == "color" or page == "corner":
 		if state.advance(now):
 			if page == "corner":
@@ -100,6 +115,48 @@ func _process(_delta: float) -> void:
 			complete_summary()
 
 
+func _sync_sens_alt_cursor() -> void:
+	var alt_held := Input.is_key_pressed(KEY_ALT)
+	if alt_held == sens_lab.cursor_mode:
+		return
+	sens_lab.set_cursor_mode(alt_held)
+	_set_sens_slider_interactive(alt_held)
+	if not alt_held:
+		sens_slider_dragging = false
+	_refresh_sens()
+
+
+func _input(event: InputEvent) -> void:
+	if page != "sens" or not sens_lab.cursor_mode:
+		return
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		var over := _sens_slider_hit(event.position)
+		if event.pressed and over:
+			sens_slider_dragging = true
+			_apply_sens_slider_at(event.position.x)
+			get_viewport().set_input_as_handled()
+		elif not event.pressed:
+			sens_slider_dragging = false
+	elif event is InputEventMouseMotion and sens_slider_dragging:
+		_apply_sens_slider_at(event.position.x)
+		get_viewport().set_input_as_handled()
+
+
+func _sens_slider_hit(pos: Vector2) -> bool:
+	if sens_slider == null:
+		return false
+	return Rect2(sens_slider.global_position, sens_slider.size).grow(8.0).has_point(pos)
+
+
+func _apply_sens_slider_at(x: float) -> void:
+	var left := sens_slider.global_position.x
+	var width := maxf(1.0, sens_slider.size.x)
+	var t := clampf((x - left) / width, 0.0, 1.0)
+	var value := lerpf(Camera3DConfig.LOOK_SENS_MIN, Camera3DConfig.LOOK_SENS_MAX, t)
+	value = snappedf(value, Camera3DConfig.LOOK_SENS_STEP)
+	_set_look_sensitivity(value, true)
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("back"):
 		if page.is_empty():
@@ -109,6 +166,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 	if page.is_empty():
+		return
+	if page == "sens":
+		_handle_sens_input(event)
 		return
 	if event.is_action_pressed("restart") and _summary_visible():
 		_restart_project()
@@ -134,14 +194,20 @@ func show_menu() -> void:
 	summary.hide()
 	trial_list.hide()
 	flight_score_layer.hide()
+	sens_slider_layer.hide()
 	corner_watch.set_active(false)
 	sphere_aim.set_active(false)
+	sens_lab.set_active(false)
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	$CanvasLayer/HUD.hide()
+	_update_trial_list_opacity()
 	_update_best_scores()
 
 
 func enter_project(project: String) -> void:
+	if project == "sens":
+		enter_sens_lab()
+		return
 	page = project
 	state.reset()
 	osu_state.reset()
@@ -150,13 +216,39 @@ func enter_project(project: String) -> void:
 	_reset_trial_list()
 	menu.hide()
 	summary.hide()
+	sens_slider_layer.hide()
 	trial_list.show()
 	color_reaction.visible = page == "color"
 	osu_page.visible = page == "osu"
 	corner_watch.set_active(page == "corner")
 	sphere_aim.set_active(page == "spheres")
+	sens_lab.set_active(false)
+	_apply_look_sensitivity()
+	_update_trial_list_opacity()
 	$CanvasLayer/HUD.visible = page == "corner" or page == "spheres"
 	_refresh_project()
+
+
+func enter_sens_lab() -> void:
+	page = "sens"
+	state.reset()
+	osu_state.reset()
+	sphere_state.reset()
+	_clear_osu_circles()
+	menu.hide()
+	summary.hide()
+	trial_list.hide()
+	color_reaction.hide()
+	osu_page.hide()
+	corner_watch.set_active(false)
+	sphere_aim.set_active(false)
+	_apply_look_sensitivity()
+	sens_lab.set_active(true)
+	sens_slider_layer.show()
+	_sync_sens_slider()
+	_set_sens_slider_interactive(false)
+	$CanvasLayer/HUD.show()
+	_refresh_sens()
 
 
 func complete_summary() -> void:
@@ -168,6 +260,7 @@ func complete_summary() -> void:
 	summary_text.text = "FIVE-TRIAL RESULT\n\n%.1f ms\nMEDIAN TIME\n\nMEAN  %.1f ms\nSTD DEV  %.1f ms\n\nR: RETRY    ESC: MENU" % [result.median, result.mean, result.deviation]
 	$CanvasLayer/HUD.hide()
 	summary.show()
+	_update_trial_list_opacity()
 
 
 func _restart_project() -> void:
@@ -177,6 +270,7 @@ func _restart_project() -> void:
 	_clear_osu_circles()
 	summary.hide()
 	_reset_trial_list()
+	_update_trial_list_opacity()
 	if page == "corner" or page == "spheres":
 		$CanvasLayer/HUD.show()
 		if page == "spheres":
@@ -225,13 +319,14 @@ func _handle_osu_input(event: InputEvent) -> void:
 	if hit_index + 1 == osu_state.expected:
 		osu_state.hit_next(now)
 		_mark_osu_hit(hit_index)
+		_show_osu_guide_line()
+		_refresh_osu_visibility()
 	else:
 		osu_state.miss()
 		_clear_osu_circles()
 	if osu_state.reactions_us.size() > samples_before:
 		var new_sample_index: int = osu_state.reactions_us.size() - 1
 		_show_score_flight(new_sample_index, osu_state.reactions_us[new_sample_index])
-		_clear_osu_circles()
 	if osu_state.stage == OsuState.Stage.INVALID:
 		_clear_osu_circles()
 	_refresh_project()
@@ -267,6 +362,78 @@ func _handle_sphere_input(event: InputEvent) -> void:
 	_refresh_project()
 
 
+func _handle_sens_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			_nudge_look_sensitivity(Camera3DConfig.LOOK_SENS_STEP)
+			get_viewport().set_input_as_handled()
+			return
+		if event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			_nudge_look_sensitivity(-Camera3DConfig.LOOK_SENS_STEP)
+			get_viewport().set_input_as_handled()
+			return
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_MINUS or event.keycode == KEY_KP_SUBTRACT:
+			sens_lab.nudge_spacing(-SensLab.SPACING_STEP)
+			_refresh_sens()
+			get_viewport().set_input_as_handled()
+			return
+		if event.keycode == KEY_EQUAL or event.keycode == KEY_KP_ADD:
+			sens_lab.nudge_spacing(SensLab.SPACING_STEP)
+			_refresh_sens()
+			get_viewport().set_input_as_handled()
+			return
+	if sens_lab.cursor_mode:
+		return
+	var is_fire: bool = (
+		(event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT)
+		or _keyboard_react(event)
+	)
+	if is_fire:
+		sens_lab.fire_ray()
+		_refresh_sens()
+
+
+func _nudge_look_sensitivity(delta: float) -> void:
+	_set_look_sensitivity(scores.look_sens + delta, true)
+
+
+func _set_look_sensitivity(value: float, sync_slider: bool = true) -> void:
+	scores.set_look_sensitivity(value)
+	_apply_look_sensitivity()
+	if sync_slider:
+		_sync_sens_slider()
+	else:
+		sens_slider_label.text = "LOOK SENSITIVITY  %.2f" % scores.look_sens
+	if page == "sens":
+		_refresh_sens()
+
+
+func _apply_look_sensitivity() -> void:
+	corner_watch.set_look_sensitivity(scores.look_sens)
+	sphere_aim.set_look_sensitivity(scores.look_sens)
+	sens_lab.set_look_sensitivity(scores.look_sens)
+
+
+func _sync_sens_slider() -> void:
+	if sens_slider == null:
+		return
+	sens_slider.set_value_no_signal(scores.look_sens)
+	sens_slider_label.text = "LOOK SENSITIVITY  %.2f" % scores.look_sens
+
+
+func _set_sens_slider_interactive(enabled: bool) -> void:
+	if sens_slider == null:
+		return
+	var filter := Control.MOUSE_FILTER_STOP if enabled else Control.MOUSE_FILTER_IGNORE
+	sens_slider.mouse_filter = filter
+	sens_slider.editable = enabled
+
+
+func _on_sens_slider_changed(value: float) -> void:
+	_set_look_sensitivity(value, false)
+
+
 func _refresh_project() -> void:
 	if page == "color" and state.stage == ReactionState.Stage.INVALID:
 		_reset_trial_list()
@@ -285,6 +452,18 @@ func _refresh_project() -> void:
 			_refresh_osu()
 		"spheres":
 			_refresh_spheres()
+		"sens":
+			_refresh_sens()
+
+
+func _refresh_sens() -> void:
+	hud_title.text = "3D LOOK SENSITIVITY"
+	hud_hint.text = "SENS  %.2f    SPACING  %.2f" % [scores.look_sens, sens_lab.spacing_side()]
+	hud_dots.text = ""
+	if sens_lab.cursor_mode:
+		hud_footer.text = "DRAG SLIDER  |  WHEEL: SENS  |  -/=: SPACING  |  RELEASE ALT: LOOK  |  ESC: MENU"
+	else:
+		hud_footer.text = "WHEEL: SENS  |  -/=: SPACING  |  HOLD ALT: CURSOR  |  LMB / REACT KEYS: FIRE  |  ESC: MENU"
 
 
 func _refresh_color() -> void:
@@ -349,6 +528,7 @@ func _refresh_osu() -> void:
 	osu_title.text = title
 	osu_hint.text = hint
 	osu_dots.text = _dots(osu_state.reactions_us.size())
+	_update_trial_list_opacity()
 
 
 func _refresh_spheres() -> void:
@@ -442,14 +622,15 @@ func _ensure_input_actions() -> void:
 
 
 func _build_menu() -> void:
+	menu.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_add_full_rect(menu, DARK)
 	var title := _label("NEKO / BENCHMARK", 34, INK)
-	title.position = Vector2(0, 48)
-	title.size = Vector2(1280, 48)
+	title.position = Vector2(0, 36)
+	title.size = Vector2(1280, 44)
 	menu.add_child(title)
 	var subtitle := _label("SELECT A TEST", 18, MUTED)
-	subtitle.position = Vector2(0, 100)
-	subtitle.size = Vector2(1280, 28)
+	subtitle.position = Vector2(0, 84)
+	subtitle.size = Vector2(1280, 26)
 	menu.add_child(subtitle)
 	var projects := [
 		{"id": "color", "name": "COLOR REACTION"},
@@ -460,13 +641,20 @@ func _build_menu() -> void:
 	menu_buttons.clear()
 	for index in projects.size():
 		var button := Button.new()
-		button.position = Vector2(340, 145 + index * 110)
-		button.size = Vector2(600, 92)
+		button.position = Vector2(340, 120 + index * 88)
+		button.size = Vector2(600, 76)
 		button.text = projects[index].name
-		button.add_theme_font_size_override("font_size", 22)
+		button.add_theme_font_size_override("font_size", 20)
 		button.pressed.connect(enter_project.bind(projects[index].id))
 		menu.add_child(button)
 		menu_buttons.append(button)
+	sens_menu_button = Button.new()
+	sens_menu_button.position = Vector2(340, 472)
+	sens_menu_button.size = Vector2(600, 76)
+	sens_menu_button.text = "3D LOOK SENSITIVITY"
+	sens_menu_button.add_theme_font_size_override("font_size", 20)
+	sens_menu_button.pressed.connect(enter_sens_lab)
+	menu.add_child(sens_menu_button)
 	var footer := _label("Choose a test with the mouse.  ESC: QUIT", 15, MUTED)
 	footer.position = Vector2(0, 680)
 	footer.size = Vector2(1280, 28)
@@ -474,6 +662,7 @@ func _build_menu() -> void:
 
 
 func _build_color_page() -> void:
+	color_reaction.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	color_background = _add_full_rect(color_reaction, DARK)
 	color_title = _label("", 48, INK)
 	color_title.position = Vector2(0, 275)
@@ -494,6 +683,7 @@ func _build_color_page() -> void:
 
 
 func _build_osu_page() -> void:
+	osu_page.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	osu_background = _add_full_rect(osu_page, DARK)
 	osu_circles_root = Control.new()
 	osu_circles_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -512,7 +702,7 @@ func _build_osu_page() -> void:
 	osu_dots.size = Vector2(1280, 30)
 	osu_page.add_child(osu_dots)
 	var footer := _label("CURSOR ON NEXT CIRCLE + LMB OR REACT KEY | ESC: MENU", 14, MUTED)
-	footer.position = Vector2(0, 680)
+	footer.position = Vector2(0, 650)
 	footer.size = Vector2(1280, 24)
 	osu_page.add_child(footer)
 
@@ -532,22 +722,72 @@ func _build_hud() -> void:
 	hud_dots.size = Vector2(1280, 30)
 	hud.add_child(hud_dots)
 	var crosshair := _label("+", 28, INK)
-	crosshair.position = Vector2(620, 345)
-	crosshair.size = Vector2(40, 40)
+	crosshair.set_anchors_preset(Control.PRESET_CENTER)
+	crosshair.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	crosshair.grow_vertical = Control.GROW_DIRECTION_BOTH
+	crosshair.offset_left = -20.0
+	crosshair.offset_top = -20.0
+	crosshair.offset_right = 20.0
+	crosshair.offset_bottom = 20.0
 	hud.add_child(crosshair)
 	hud_footer = _label("MOUSE: LIMITED LOOK | LMB / REACT KEYS: FIRE | ESC: MENU", 14, INK)
-	hud_footer.position = Vector2(0, 680)
+	hud_footer.position = Vector2(0, 650)
 	hud_footer.size = Vector2(1280, 24)
 	hud.add_child(hud_footer)
 
 
+func _build_sens_slider() -> void:
+	sens_slider_layer = Control.new()
+	sens_slider_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	sens_slider_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sens_slider_layer.hide()
+	$CanvasLayer.add_child(sens_slider_layer)
+	var panel := Panel.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.0, 0.0, 0.0, 0.72)
+	style.corner_radius_top_left = 12
+	style.corner_radius_top_right = 12
+	style.corner_radius_bottom_left = 12
+	style.corner_radius_bottom_right = 12
+	panel.add_theme_stylebox_override("panel", style)
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.position = Vector2(290, 510)
+	panel.size = Vector2(700, 96)
+	sens_slider_layer.add_child(panel)
+	sens_slider_label = _label("LOOK SENSITIVITY  1.00", 16, INK)
+	sens_slider_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sens_slider_label.position = Vector2(310, 518)
+	sens_slider_label.size = Vector2(660, 28)
+	sens_slider_layer.add_child(sens_slider_label)
+	sens_slider = HSlider.new()
+	sens_slider.min_value = Camera3DConfig.LOOK_SENS_MIN
+	sens_slider.max_value = Camera3DConfig.LOOK_SENS_MAX
+	sens_slider.step = Camera3DConfig.LOOK_SENS_STEP
+	sens_slider.value = scores.look_sens
+	sens_slider.position = Vector2(330, 558)
+	sens_slider.size = Vector2(620, 28)
+	sens_slider.focus_mode = Control.FOCUS_NONE
+	sens_slider.value_changed.connect(_on_sens_slider_changed)
+	sens_slider_layer.add_child(sens_slider)
+	_set_sens_slider_interactive(false)
+
+
 func _build_summary() -> void:
+	summary.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_add_full_rect(summary, DARK)
 	summary_text = _label("", 20, INK)
 	summary_text.position = Vector2(0, 135)
 	summary_text.size = Vector2(1280, 440)
 	summary_text.add_theme_constant_override("line_spacing", 10)
 	summary.add_child(summary_text)
+
+
+func _update_trial_list_opacity() -> void:
+	# Only dim while OSU targets are on screen (ACTIVE); wait / between rounds stay readable.
+	if page == "osu" and osu_state.stage == OsuState.Stage.ACTIVE:
+		trial_list.modulate = Color(1, 1, 1, 0.38)
+	else:
+		trial_list.modulate = Color.WHITE
 
 
 func _build_trial_list() -> void:
@@ -559,17 +799,23 @@ func _build_trial_list() -> void:
 	style.corner_radius_bottom_left = 12
 	style.corner_radius_bottom_right = 12
 	background.add_theme_stylebox_override("panel", style)
-	background.position = Vector2(16, 235)
-	background.size = Vector2(228, 218)
+	background.position = Vector2(16, 220)
+	background.size = Vector2(228, 248)
 	trial_list.add_child(background)
 	var title := _label("ROUND RESULTS", 13, MUTED)
-	title.position = Vector2(20, 247)
+	title.position = Vector2(20, 232)
 	title.size = Vector2(220, 24)
 	trial_list.add_child(title)
+	live_timer = _label("", 16, ACCENT)
+	live_timer.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	live_timer.position = Vector2(28, 258)
+	live_timer.size = Vector2(210, 24)
+	live_timer.hide()
+	trial_list.add_child(live_timer)
 	for index in 5:
 		var row := _label("ROUND %d  --" % (index + 1), 14, INK)
 		row.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-		row.position = Vector2(28, 280 + index * 32)
+		row.position = Vector2(28, 290 + index * 32)
 		row.size = Vector2(210, 24)
 		trial_list.add_child(row)
 		trial_rows.append(row)
@@ -580,34 +826,88 @@ func _build_trial_list() -> void:
 
 func _spawn_osu_circles() -> void:
 	_clear_osu_circles()
-	var min_dist := OSU_RADIUS * 2.0 + OSU_PAD
-	var area := Rect2(280, 160, 720, 460)
-	var attempts := 0
-	while osu_centers.size() < OsuState.TARGETS and attempts < 800:
-		attempts += 1
-		var center := Vector2(
-			rng.randf_range(area.position.x + OSU_RADIUS, area.end.x - OSU_RADIUS),
-			rng.randf_range(area.position.y + OSU_RADIUS, area.end.y - OSU_RADIUS)
-		)
-		var ok := true
-		for other in osu_centers:
-			if center.distance_to(other) < min_dist:
-				ok = false
-				break
-		if not ok:
-			continue
-		osu_centers.append(center)
-	# ponytail: if RNG packing fails, fall back to a fixed 2x3 grid so the round is always playable.
-	if osu_centers.size() < OsuState.TARGETS:
-		osu_centers.clear()
-		for index in OsuState.TARGETS:
-			var col: int = index % 3
-			var row: int = int(index / 3)
-			osu_centers.append(Vector2(400.0 + col * 200.0, 260.0 + row * 180.0))
+	var area := Rect2(80, 120, 1120, 540)
+	var inner := Rect2(
+		area.position.x + OSU_RADIUS,
+		area.position.y + OSU_RADIUS,
+		area.size.x - OSU_RADIUS * 2.0,
+		area.size.y - OSU_RADIUS * 2.0
+	)
+	var built := false
+	for _attempt in 80:
+		if _try_build_osu_chain(inner):
+			built = true
+			break
+	if not built:
+		_build_osu_chain_fallback(inner)
 	for index in osu_centers.size():
 		var circle := _make_osu_circle(index + 1, osu_centers[index])
 		osu_circles_root.add_child(circle)
 		osu_circle_nodes.append(circle)
+	_refresh_osu_visibility()
+
+
+func _try_build_osu_chain(inner: Rect2) -> bool:
+	osu_centers.clear()
+	osu_centers.append(Vector2(
+		rng.randf_range(inner.position.x, inner.end.x),
+		rng.randf_range(inner.position.y, inner.end.y)
+	))
+	while osu_centers.size() < OsuState.TARGETS:
+		var prev: Vector2 = osu_centers[osu_centers.size() - 1]
+		var placed := false
+		for _angle_try in 48:
+			var angle := rng.randf() * TAU
+			var next := prev + Vector2.from_angle(angle) * OSU_SPACING
+			if not inner.has_point(next):
+				continue
+			# Only consecutive triples must not overlap (check new vs centers[-2]).
+			if osu_centers.size() >= 2:
+				var older: Vector2 = osu_centers[osu_centers.size() - 2]
+				if next.distance_to(older) < OSU_RADIUS * 2.0:
+					continue
+			osu_centers.append(next)
+			placed = true
+			break
+		if not placed:
+			osu_centers.clear()
+			return false
+	return true
+
+
+func _build_osu_chain_fallback(inner: Rect2) -> void:
+	# ponytail: serpentine path with fixed edge length; O(1) layout if RNG chain fails.
+	osu_centers.clear()
+	var start := Vector2(inner.position.x + 40.0, inner.get_center().y)
+	osu_centers.append(start)
+	var heading := 0.0
+	var guard := 0
+	while osu_centers.size() < OsuState.TARGETS and guard < 64:
+		guard += 1
+		var prev: Vector2 = osu_centers[osu_centers.size() - 1]
+		var placed := false
+		for turn in 24:
+			var angle := heading + (float(turn) - 11.5) * 0.2
+			var next := prev + Vector2.from_angle(angle) * OSU_SPACING
+			if not inner.has_point(next):
+				continue
+			if osu_centers.size() >= 2 and next.distance_to(osu_centers[osu_centers.size() - 2]) < OSU_RADIUS * 2.0:
+				continue
+			osu_centers.append(next)
+			heading = angle
+			placed = true
+			break
+		if not placed:
+			heading += 0.7
+	# If still short, place remaining along a clipped horizontal zig-zag inside bounds.
+	while osu_centers.size() < OsuState.TARGETS:
+		var prev2: Vector2 = osu_centers[osu_centers.size() - 1]
+		var next2 := Vector2(prev2.x + OSU_SPACING, prev2.y)
+		if not inner.has_point(next2):
+			next2 = Vector2(prev2.x, clampf(prev2.y + OSU_SPACING, inner.position.y, inner.end.y))
+		if not inner.has_point(next2):
+			next2 = inner.get_center()
+		osu_centers.append(next2)
 
 
 func _make_osu_circle(number: int, center: Vector2) -> Control:
@@ -617,6 +917,7 @@ func _make_osu_circle(number: int, center: Vector2) -> Control:
 	root.size = Vector2(OSU_RADIUS * 2.0, OSU_RADIUS * 2.0)
 	root.ring_color = ACCENT
 	root.fill_color = DARK
+	root.modulate.a = 0.0
 	var label := _label(str(number), 28, INK)
 	label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	root.add_child(label)
@@ -625,26 +926,93 @@ func _make_osu_circle(number: int, center: Vector2) -> Control:
 
 func _osu_circle_at(point: Vector2) -> int:
 	for index in osu_centers.size():
+		if not _osu_circle_is_active(index):
+			continue
 		if point.distance_to(osu_centers[index]) <= OSU_RADIUS:
 			return index
 	return -1
+
+
+func _osu_circle_is_active(index: int) -> bool:
+	var number := index + 1
+	return number == osu_state.expected or number == osu_state.expected + 1
+
+
+func _refresh_osu_visibility() -> void:
+	for index in osu_circle_nodes.size():
+		var node := osu_circle_nodes[index]
+		if node == null or not is_instance_valid(node):
+			continue
+		if node.get_meta("fading", false):
+			continue
+		var should_show := osu_state.stage == OsuState.Stage.ACTIVE and _osu_circle_is_active(index)
+		node.visible = should_show
+		if should_show and node.modulate.a < 0.99:
+			node.modulate.a = 1.0
 
 
 func _mark_osu_hit(index: int) -> void:
 	if index < 0 or index >= osu_circle_nodes.size():
 		return
 	var node := osu_circle_nodes[index]
+	if node == null or not is_instance_valid(node):
+		return
+	node.set_meta("fading", true)
 	if node is OsuCircleDraw:
 		var circle: OsuCircleDraw = node
 		circle.ring_color = MUTED
 		circle.queue_redraw()
+	var tween := create_tween()
+	tween.tween_property(node, "modulate:a", 0.0, OSU_FADE_SEC)
+	tween.tween_callback(func() -> void:
+		if is_instance_valid(node):
+			node.visible = false
+	)
+
+
+func _show_osu_guide_line() -> void:
+	# After a hit, expected is the next target; meteor streak from next → next+1 edges.
+	var from_idx := osu_state.expected - 1
+	var to_idx := osu_state.expected
+	if from_idx < 0 or to_idx >= osu_centers.size():
+		return
+	var guide := OsuGuideLine.new()
+	guide.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	guide.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	guide.from_point = osu_centers[from_idx]
+	guide.to_point = osu_centers[to_idx]
+	guide.radius = OSU_RADIUS
+	guide.line_color = Color.WHITE
+	osu_circles_root.add_child(guide)
 
 
 func _clear_osu_circles() -> void:
-	for node in osu_circle_nodes:
+	for node in osu_circles_root.get_children():
 		node.queue_free()
 	osu_circle_nodes.clear()
 	osu_centers.clear()
+
+
+func _update_live_trial_time(now_us: int) -> void:
+	if live_timer == null or summary.visible:
+		return
+	var start_us := 0
+	match page:
+		"color", "corner":
+			if state.stage == ReactionState.Stage.TARGET:
+				start_us = state.target_frame_us
+		"spheres":
+			if sphere_state.stage == SphereState.Stage.AIMING:
+				start_us = sphere_state.target_frame_us
+		"osu":
+			if osu_state.stage == OsuState.Stage.ACTIVE and osu_state.start_us > 0:
+				start_us = osu_state.start_us
+	if start_us <= 0:
+		live_timer.hide()
+		return
+	var elapsed_ms := float(maxi(0, now_us - start_us)) / 1000.0
+	live_timer.text = "LIVE  %.1f ms" % elapsed_ms
+	live_timer.show()
 
 
 func _reset_trial_list() -> void:
@@ -652,11 +1020,15 @@ func _reset_trial_list() -> void:
 		score_flight.kill()
 	score_flight_active = false
 	flight_score_layer.hide()
+	if live_timer:
+		live_timer.hide()
 	for index in trial_rows.size():
 		trial_rows[index].text = "ROUND %d  --" % (index + 1)
 
 
 func _show_score_flight(index: int, reaction_us: int) -> void:
+	if live_timer:
+		live_timer.hide()
 	var score_text := "%.1f ms" % (float(reaction_us) / 1000.0)
 	if score_flight:
 		score_flight.kill()
@@ -665,7 +1037,7 @@ func _show_score_flight(index: int, reaction_us: int) -> void:
 	flight_score.text = score_text
 	flight_score.position = Vector2(530, 328)
 	score_flight = create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN_OUT)
-	score_flight.tween_property(flight_score, "position", Vector2(28, 280 + index * 32), 0.5)
+	score_flight.tween_property(flight_score, "position", Vector2(28, 290 + index * 32), 0.5)
 	score_flight.tween_callback(_finish_score_flight.bind(index, score_text))
 
 
@@ -685,6 +1057,8 @@ func _update_best_scores() -> void:
 	for index in menu_buttons.size():
 		var best := scores.get_best(labels[index].key)
 		menu_buttons[index].text = "%s\nBEST: %s" % [labels[index].name, "--" if best == 0.0 else "%.1f ms" % best]
+	if sens_menu_button:
+		sens_menu_button.text = "3D LOOK SENSITIVITY\nCURRENT: %.2f" % scores.look_sens
 
 
 func _label(text: String, font_size: int, color: Color) -> Label:
@@ -692,6 +1066,7 @@ func _label(text: String, font_size: int, color: Color) -> Label:
 	label.text = text
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.add_theme_font_override("font", load("res://assets/MapleMono-Regular.ttf"))
 	label.add_theme_font_size_override("font_size", font_size)
 	label.add_theme_color_override("font_color", color)
@@ -716,3 +1091,79 @@ class OsuCircleDraw extends Control:
 		var radius := size.x * 0.5
 		draw_circle(center, radius, ring_color)
 		draw_circle(center, maxf(0.0, radius - 6.0), fill_color)
+
+
+class OsuGuideLine extends Control:
+	var from_point := Vector2.ZERO
+	var to_point := Vector2.ZERO
+	var radius := 48.0
+	var line_color := Color.WHITE
+	# Phase 0: reveal start→end; phase 1: whole streak fades out.
+	var phase := 0
+	var anim_t := 0.0
+	const REVEAL_SEC := 0.05
+	const FADE_SEC := 0.08
+	const SEGMENTS := 24
+
+	func _ready() -> void:
+		set_process(true)
+
+	func _process(delta: float) -> void:
+		var duration := REVEAL_SEC if phase == 0 else FADE_SEC
+		anim_t = minf(1.0, anim_t + delta / duration)
+		if phase == 1:
+			modulate.a = 1.0 - anim_t
+		queue_redraw()
+		if anim_t >= 1.0:
+			if phase == 0:
+				phase = 1
+				anim_t = 0.0
+			else:
+				queue_free()
+
+	func _draw() -> void:
+		var direction := to_point - from_point
+		var length := direction.length()
+		if length <= radius * 2.0 + 1.0:
+			return
+		var tip := direction / length
+		var start := from_point + tip * radius
+		var end := to_point - tip * radius
+		var path := end - start
+		if path.length_squared() < 1.0:
+			return
+		# Reveal draws [0, anim_t]; fade phase keeps the full streak and dims via modulate.
+		var visible_to := 1.0 if phase == 1 else anim_t
+		if visible_to <= 0.0:
+			return
+		_draw_streak(start, path, 0.0, visible_to, 10.0, 18.0, Color(1, 1, 1, 0.12), 0.15)
+		_draw_streak(start, path, 0.0, visible_to, 5.0, 10.0, Color(1, 1, 1, 0.28), 0.35)
+		_draw_streak(start, path, 0.0, visible_to, 2.5, 5.5, Color(1, 1, 1, 0.75), 0.75)
+		_draw_streak(start, path, 0.0, visible_to, 1.2, 3.0, Color(1, 1, 1, 1.0), 1.0)
+
+	func _draw_streak(
+		start: Vector2,
+		path: Vector2,
+		visible_from: float,
+		visible_to: float,
+		width_start: float,
+		width_end: float,
+		color: Color,
+		alpha_scale: float
+	) -> void:
+		for i in SEGMENTS:
+			var t0 := float(i) / float(SEGMENTS)
+			var t1 := float(i + 1) / float(SEGMENTS)
+			if t1 <= visible_from or t0 >= visible_to:
+				continue
+			var a := maxf(t0, visible_from)
+			var b := minf(t1, visible_to)
+			if b <= a:
+				continue
+			var p0 := start + path * a
+			var p1 := start + path * b
+			var along := (a + b) * 0.5
+			var col := color
+			col.a *= lerpf(0.55, 1.0, along) * alpha_scale
+			var width := lerpf(width_start, width_end, along)
+			draw_line(p0, p1, col, width, true)
