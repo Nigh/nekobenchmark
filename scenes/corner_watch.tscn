@@ -1,38 +1,14 @@
-[gd_scene load_steps=11 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://scripts/corner_watch.gd" id="1_script"]
 
-[sub_resource type="Environment" id="Environment_main"]
-background_mode = 1
-background_color = Color(0.035, 0.055, 0.09, 1)
-ambient_light_source = 3
-ambient_light_color = Color(0.38, 0.43, 0.5, 1)
-ambient_light_energy = 0.45
-tonemap_mode = 2
-
-[sub_resource type="StandardMaterial3D" id="Material_floor"]
-albedo_color = Color(0.16, 0.19, 0.2, 1)
-roughness = 0.9
-
-[sub_resource type="BoxMesh" id="Mesh_floor"]
-material = SubResource("Material_floor")
-size = Vector3(18, 0.15, 20)
-
-[sub_resource type="StandardMaterial3D" id="Material_wall"]
-albedo_color = Color(0.31, 0.36, 0.39, 1)
-roughness = 0.8
-
-[sub_resource type="BoxMesh" id="Mesh_left"]
-material = SubResource("Material_wall")
-size = Vector3(3, 5, 1)
-
-[sub_resource type="BoxMesh" id="Mesh_right"]
-material = SubResource("Material_wall")
-size = Vector3(3, 5, 1)
+[sub_resource type="StandardMaterial3D" id="Material_cover"]
+albedo_color = Color(0.28, 0.3, 0.33, 1)
+roughness = 0.85
 
 [sub_resource type="BoxMesh" id="Mesh_cover"]
-material = SubResource("Material_wall")
-size = Vector3(2, 4, 1)
+material = SubResource("Material_cover")
+size = Vector3(1.8, 3.2, 1.4)
 
 [sub_resource type="StandardMaterial3D" id="Material_enemy"]
 albedo_color = Color(0.74, 0.2, 0.16, 1)
@@ -45,43 +21,36 @@ size = Vector3(0.75, 2.2, 0.55)
 [node name="CornerWatch" type="Node3D"]
 script = ExtResource("1_script")
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
-environment = SubResource("Environment_main")
-
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
 rotation_degrees = Vector3(-52, -28, 0)
-light_energy = 1.2
+light_energy = 1.25
 shadow_enabled = true
 
 [node name="FillLight" type="OmniLight3D" parent="."]
-position = Vector3(0, 3, 4)
-light_color = Color(0.55, 0.65, 1, 1)
-light_energy = 1.1
-omni_range = 12.0
+position = Vector3(0, 4, 2)
+light_color = Color(0.7, 0.75, 0.85, 1)
+light_energy = 1.2
+omni_range = 24.0
 
 [node name="Camera3D" type="Camera3D" parent="."]
-position = Vector3(0, 0.8, 0)
-current = true
-fov = 70.0
-
-[node name="Floor" type="MeshInstance3D" parent="."]
-position = Vector3(0, -1, -8)
-mesh = SubResource("Mesh_floor")
-
-[node name="LeftWall" type="MeshInstance3D" parent="."]
-position = Vector3(-3.8, 1, -7)
-mesh = SubResource("Mesh_left")
-
-[node name="RightWall" type="MeshInstance3D" parent="."]
-position = Vector3(3.8, 1, -7)
-mesh = SubResource("Mesh_right")
+position = Vector3(0, 1.4, 0)
+current = false
+keep_aspect = 0
+fov = 103.0
 
 [node name="Cover" type="MeshInstance3D" parent="."]
-position = Vector3(0, 0.5, -9)
+position = Vector3(0, 1.6, -9.5)
+mesh = SubResource("Mesh_cover")
+
+[node name="LeftCover" type="MeshInstance3D" parent="."]
+position = Vector3(-2.7, 1.6, -5.6)
+mesh = SubResource("Mesh_cover")
+
+[node name="RightCover" type="MeshInstance3D" parent="."]
+position = Vector3(2.7, 1.6, -5.6)
 mesh = SubResource("Mesh_cover")
 
 [node name="Enemy" type="Node3D" parent="."]
-position = Vector3(1.7, 0.1, -7)
-
+position = Vector3(2.2, 1.1, -7.4)
 [node name="MeshInstance3D" type="MeshInstance3D" parent="Enemy"]
 mesh = SubResource("Mesh_enemy")

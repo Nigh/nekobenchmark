@@ -1,0 +1,25 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/sens_lab.gd" id="1_script"]
+
+[node name="SensLab" type="Node3D"]
+script = ExtResource("1_script")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-52, -28, 0)
+light_energy = 1.25
+shadow_enabled = true
+
+[node name="FillLight" type="OmniLight3D" parent="."]
+position = Vector3(0, 4, 2)
+light_color = Color(0.7, 0.75, 0.85, 1)
+light_energy = 1.2
+omni_range = 24.0
+
+[node name="Camera3D" type="Camera3D" parent="."]
+position = Vector3(0, 1.4, 0)
+current = false
+keep_aspect = 0
+fov = 103.0
+
+[node name="Targets" type="Node3D" parent="."]
