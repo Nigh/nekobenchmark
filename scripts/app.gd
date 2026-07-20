@@ -61,6 +61,66 @@ var sens_slider_layer: Control
 var sens_slider: HSlider
 var sens_slider_label: Label
 var sens_slider_dragging := false
+var profile_rows: Array[Label] = []
+var profile_radar: ProfileRadar
+var profile_hint: Label
+
+
+class ProfileRadar extends Control:
+	var radii: Array[float] = [-1.0, -1.0, -1.0, -1.0]
+	var axis_labels: Array[String] = ["COLOR", "CORNER", "OSU", "SPHERE"]
+
+	func set_radii(values: Array[float]) -> void:
+		radii = values.duplicate()
+		queue_redraw()
+
+	func _draw() -> void:
+		var center := size * 0.5
+		var radius := minf(size.x, size.y) * 0.36
+		var ring := Color("#97a6bd")
+		ring.a = 0.22
+		var spoke := Color("#97a6bd")
+		spoke.a = 0.35
+		for step in 4:
+			draw_arc(center, radius * float(step + 1) * 0.25, 0.0, TAU, 64, ring, 1.0, true)
+		var tips: PackedVector2Array = []
+		for index in 4:
+			var angle := -PI * 0.5 + float(index) * TAU * 0.25
+			var tip := center + Vector2(cos(angle), sin(angle)) * radius
+			tips.append(tip)
+			draw_line(center, tip, spoke, 1.0, true)
+		var points: PackedVector2Array = []
+		var complete := radii.size() == 4
+		for index in 4:
+			if not complete or radii[index] < 0.0:
+				complete = false
+				break
+			var angle := -PI * 0.5 + float(index) * TAU * 0.25
+			points.append(center + Vector2(cos(angle), sin(angle)) * radius * radii[index])
+		if complete:
+			var fill := Color("#7790ff")
+			fill.a = 0.22
+			draw_colored_polygon(points, fill)
+			for index in 4:
+				draw_line(points[index], points[(index + 1) % 4], Color("#7790ff"), 2.0, true)
+				draw_circle(points[index], 3.5, Color("#7790ff"))
+		var font: Font = ThemeDB.fallback_font
+		var maple := load("res://assets/MapleMono-Regular.ttf")
+		if maple is Font:
+			font = maple
+		for index in 4:
+			var label_pos := tips[index] + (tips[index] - center).normalized() * 16.0
+			var text := axis_labels[index]
+			var text_size := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11)
+			draw_string(
+				font,
+				label_pos - text_size * 0.5,
+				text,
+				HORIZONTAL_ALIGNMENT_LEFT,
+				-1,
+				11,
+				Color("#97a6bd")
+			)
 
 
 func _ready() -> void:
@@ -625,12 +685,14 @@ func _build_menu() -> void:
 	menu.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_add_full_rect(menu, DARK)
 	var title := _label("NEKO / BENCHMARK", 34, INK)
-	title.position = Vector2(0, 36)
-	title.size = Vector2(1280, 44)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	title.position = Vector2(40, 36)
+	title.size = Vector2(560, 44)
 	menu.add_child(title)
 	var subtitle := _label("SELECT A TEST", 18, MUTED)
-	subtitle.position = Vector2(0, 84)
-	subtitle.size = Vector2(1280, 26)
+	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	subtitle.position = Vector2(40, 84)
+	subtitle.size = Vector2(560, 26)
 	menu.add_child(subtitle)
 	var projects := [
 		{"id": "color", "name": "COLOR REACTION"},
@@ -641,24 +703,67 @@ func _build_menu() -> void:
 	menu_buttons.clear()
 	for index in projects.size():
 		var button := Button.new()
-		button.position = Vector2(340, 120 + index * 88)
-		button.size = Vector2(600, 76)
+		button.position = Vector2(40, 120 + index * 88)
+		button.size = Vector2(560, 76)
 		button.text = projects[index].name
 		button.add_theme_font_size_override("font_size", 20)
 		button.pressed.connect(enter_project.bind(projects[index].id))
 		menu.add_child(button)
 		menu_buttons.append(button)
 	sens_menu_button = Button.new()
-	sens_menu_button.position = Vector2(340, 472)
-	sens_menu_button.size = Vector2(600, 76)
+	sens_menu_button.position = Vector2(40, 472)
+	sens_menu_button.size = Vector2(560, 76)
 	sens_menu_button.text = "3D LOOK SENSITIVITY"
 	sens_menu_button.add_theme_font_size_override("font_size", 20)
 	sens_menu_button.pressed.connect(enter_sens_lab)
 	menu.add_child(sens_menu_button)
 	var footer := _label("Choose a test with the mouse.  ESC: QUIT", 15, MUTED)
-	footer.position = Vector2(0, 680)
-	footer.size = Vector2(1280, 28)
+	footer.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	footer.position = Vector2(40, 680)
+	footer.size = Vector2(560, 28)
 	menu.add_child(footer)
+	_build_profile_card()
+
+
+func _build_profile_card() -> void:
+	var card := Panel.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.0, 0.0, 0.0, 0.45)
+	style.corner_radius_top_left = 12
+	style.corner_radius_top_right = 12
+	style.corner_radius_bottom_left = 12
+	style.corner_radius_bottom_right = 12
+	style.content_margin_left = 20
+	style.content_margin_top = 16
+	style.content_margin_right = 20
+	style.content_margin_bottom = 16
+	card.add_theme_stylebox_override("panel", style)
+	card.position = Vector2(640, 100)
+	card.size = Vector2(600, 548)
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	menu.add_child(card)
+	var heading := _label("BEST SCORES", 16, MUTED)
+	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	heading.position = Vector2(660, 118)
+	heading.size = Vector2(560, 24)
+	menu.add_child(heading)
+	profile_rows.clear()
+	for index in ScoreStore.PROFILE_AXES.size():
+		var row := _label("", 16, INK)
+		row.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		row.position = Vector2(660, 152 + index * 28)
+		row.size = Vector2(560, 26)
+		menu.add_child(row)
+		profile_rows.append(row)
+	profile_radar = ProfileRadar.new()
+	profile_radar.position = Vector2(700, 280)
+	profile_radar.size = Vector2(480, 300)
+	profile_radar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	menu.add_child(profile_radar)
+	profile_hint = _label("", 13, MUTED)
+	profile_hint.position = Vector2(640, 600)
+	profile_hint.size = Vector2(600, 24)
+	menu.add_child(profile_hint)
 
 
 func _build_color_page() -> void:
@@ -1048,17 +1153,27 @@ func _finish_score_flight(index: int, score_text: String) -> void:
 
 
 func _update_best_scores() -> void:
-	var labels := [
-		{"name": "COLOR REACTION", "key": "color"},
-		{"name": "CORNER WATCH", "key": "shooter"},
-		{"name": "OSU", "key": "osu"},
-		{"name": "SPHERE AIM", "key": "spheres"},
-	]
 	for index in menu_buttons.size():
-		var best := scores.get_best(labels[index].key)
-		menu_buttons[index].text = "%s\nBEST: %s" % [labels[index].name, "--" if best == 0.0 else "%.1f ms" % best]
+		menu_buttons[index].text = ScoreStore.PROFILE_AXES[index].name
 	if sens_menu_button:
 		sens_menu_button.text = "3D LOOK SENSITIVITY\nCURRENT: %.2f" % scores.look_sens
+	var complete := true
+	for index in ScoreStore.PROFILE_AXES.size():
+		var axis: Dictionary = ScoreStore.PROFILE_AXES[index]
+		var best := scores.get_best(axis.key)
+		var value := "--" if best == 0.0 else "%.1f ms" % best
+		if best == 0.0:
+			complete = false
+		if index < profile_rows.size():
+			profile_rows[index].text = "%s    %s" % [axis.label, value]
+	if profile_radar:
+		profile_radar.set_radii(scores.profile_radii())
+	if profile_hint:
+		profile_hint.text = (
+			"ENGINE TIMING · NOT PHOTON"
+			if complete
+			else "COMPLETE ALL 4 TO FILL THE RADAR"
+		)
 
 
 func _label(text: String, font_size: int, color: Color) -> Label:

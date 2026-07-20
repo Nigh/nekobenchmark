@@ -94,6 +94,11 @@ func _run() -> void:
 
 	app.call("show_menu")
 	await process_frame
+	assert(app.get("profile_radar") != null, "menu should show profile radar")
+	assert(app.get("profile_rows").size() == 4, "profile should list four bests")
+	const ScoreStore = preload("res://scripts/score_store.gd")
+	assert(is_equal_approx(ScoreStore.radar_radius(260.0, 120.0, 400.0), 0.5))
+	assert(ScoreStore.radar_radius(0.0, 120.0, 400.0) < 0.0)
 	print("playthrough_test: PASS")
 	quit()
 

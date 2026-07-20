@@ -6,7 +6,11 @@ The bundled Maple Mono font is used directly as a Godot resource.
 
 ## Current behavior
 
-- The application opens fullscreen at a project-selection menu.
+- The application opens fullscreen at a project-selection menu. The menu column
+  sits on the left; the right side shows a best-score overview card with four
+  project medians and a radar shape. Radar axes use fixed per-mode windows
+  (lower ms → outer). The fill appears only when all four projects have a best;
+  otherwise the axes stay empty and a hint asks to complete all four.
 - The UI is English-only. Do not add CJK fonts or localized UI strings without
   explicitly revisiting the release-size requirement.
 - `Color Reaction` measures five color-change trials. Space, Z, X, arrow keys,
