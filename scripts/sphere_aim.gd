@@ -10,14 +10,17 @@ const PracticeRoom = preload("res://scripts/practice_room.gd")
 const YAW_MIN := -PI * 0.5
 const YAW_MAX := PI * 0.5
 const TARGET_COUNT := 6
-const SPHERE_RADIUS := 0.35
+const SPHERE_RADIUS := 0.42 # 1.2× prior 0.35
 const HIT_RADIUS_SCALE := 1.1
 const MIN_SEPARATION := SPHERE_RADIUS * 2.0 + 0.45
 const SPREAD_FOV_DEG := 60.0
 const DEPTH_MIN := 8.0
 const DEPTH_MAX := 16.0
+const GATE_DEPTH := 12.0
+const GATE_COLOR := Color(0.22, 0.82, 0.38, 1.0)
 
 var active := false
+var gate_active := false
 var look_sensitivity := Camera3DConfig.LOOK_SENS_DEFAULT
 var yaw := 0.0
 var pitch := -0.05
@@ -54,43 +57,96 @@ func clear_targets() -> void:
 		child.free()
 	target_bodies.clear()
 	alive.clear()
+	gate_active = false
+
+
+func spawn_gate() -> void:
+	clear_targets()
+	gate_active = true
+	var pos := _world_from_view(0.0, 0.0, GATE_DEPTH)
+	if not PracticeRoom.contains_point(pos, SPHERE_RADIUS + 0.05):
+		pos.y = clampf(pos.y, PracticeRoom.FLOOR_TOP + SPHERE_RADIUS + 0.15, PracticeRoom.CEILING_Y - SPHERE_RADIUS)
+	var body := _make_sphere(pos, GATE_COLOR)
+	targets_root.add_child(body)
+	target_bodies.append(body)
+	alive.append(true)
 
 
 func spawn_targets() -> void:
 	clear_targets()
-	var positions: Array[Vector3] = []
-	var attempts := 0
 	var half := deg_to_rad(SPREAD_FOV_DEG * 0.5)
-	while positions.size() < TARGET_COUNT and attempts < 1600:
-		attempts += 1
-		var ax := rng.randf_range(-half, half)
-		# Bias upward so balls stay above the floor inside the room.
-		var ay := rng.randf_range(-half * 0.35, half)
-		if sqrt(ax * ax + ay * ay) > half:
-			continue
-		var depth := rng.randf_range(DEPTH_MIN, DEPTH_MAX)
-		var pos := _world_from_view(ax, ay, depth)
-		if _valid_target(positions, pos):
-			positions.append(pos)
-	if positions.size() < TARGET_COUNT:
-		positions.clear()
-		for index in TARGET_COUNT:
-			var col: int = index % 3
-			var row: int = int(index / 3)
-			var ax := lerpf(-half * 0.75, half * 0.75, float(col) / 2.0)
-			var ay := lerpf(-half * 0.15, half * 0.65, float(row))
-			var depth := lerpf(DEPTH_MIN + 1.0, DEPTH_MAX - 1.0, float(index) / float(TARGET_COUNT - 1))
-			var pos := _world_from_view(ax, ay, depth)
-			if not PracticeRoom.contains_point(pos, SPHERE_RADIUS + 0.05):
-				pos.y = clampf(pos.y, PracticeRoom.FLOOR_TOP + SPHERE_RADIUS + 0.15, PracticeRoom.CEILING_Y - SPHERE_RADIUS)
-				pos.x = clampf(pos.x, -PracticeRoom.HALF_X + SPHERE_RADIUS, PracticeRoom.HALF_X - SPHERE_RADIUS)
-				pos.z = clampf(pos.z, PracticeRoom.Z_FRONT + SPHERE_RADIUS, -DEPTH_MIN)
-			positions.append(pos)
+	var positions: Array[Vector3] = []
+	# One required sample per view quadrant (TL, TR, BL, BR), then two free.
+	var quads: Array[Dictionary] = [
+		{"ax_lo": -half, "ax_hi": -0.03, "ay_lo": 0.03, "ay_hi": half},
+		{"ax_lo": 0.03, "ax_hi": half, "ay_lo": 0.03, "ay_hi": half},
+		{"ax_lo": -half, "ax_hi": -0.03, "ay_lo": -half * 0.55, "ay_hi": -0.03},
+		{"ax_lo": 0.03, "ax_hi": half, "ay_lo": -half * 0.55, "ay_hi": -0.03},
+	]
+	for quad in quads:
+		var placed := false
+		for _attempt in 500:
+			var candidate := _random_in_quad(quad, half)
+			if candidate == Vector3.INF:
+				continue
+			if _valid_target(positions, candidate):
+				positions.append(candidate)
+				placed = true
+				break
+		if not placed:
+			positions.append(_fallback_quad_pos(positions.size(), half))
+	while positions.size() < TARGET_COUNT:
+		var attempts := 0
+		var added := false
+		while attempts < 400:
+			attempts += 1
+			var ax := rng.randf_range(-half, half)
+			var ay := rng.randf_range(-half * 0.55, half)
+			if sqrt(ax * ax + ay * ay) > half:
+				continue
+			var pos := _world_from_view(ax, ay, rng.randf_range(DEPTH_MIN, DEPTH_MAX))
+			if _valid_target(positions, pos):
+				positions.append(pos)
+				added = true
+				break
+		if not added:
+			positions.append(_fallback_quad_pos(positions.size(), half))
 	for index in positions.size():
-		var body := _make_sphere(positions[index], index)
+		var color := Color(0.74, 0.2 + index * 0.05, 0.16, 1.0)
+		var body := _make_sphere(positions[index], color)
 		targets_root.add_child(body)
 		target_bodies.append(body)
 		alive.append(true)
+
+
+func _random_in_quad(quad: Dictionary, half: float) -> Vector3:
+	var ax: float = rng.randf_range(quad.ax_lo, quad.ax_hi)
+	var ay: float = rng.randf_range(quad.ay_lo, quad.ay_hi)
+	if sqrt(ax * ax + ay * ay) > half:
+		return Vector3.INF
+	return _world_from_view(ax, ay, rng.randf_range(DEPTH_MIN, DEPTH_MAX))
+
+
+func _fallback_quad_pos(index: int, half: float) -> Vector3:
+	# Deterministic seeds: first four cover quadrants; extras sit near mid-sides.
+	var seeds: Array[Vector2] = [
+		Vector2(-0.45, 0.40),
+		Vector2(0.45, 0.40),
+		Vector2(-0.45, -0.28),
+		Vector2(0.45, -0.28),
+		Vector2(-0.20, 0.15),
+		Vector2(0.20, -0.12),
+	]
+	var seed: Vector2 = seeds[clampi(index, 0, seeds.size() - 1)]
+	var ax := seed.x * half
+	var ay := seed.y * half
+	var depth := lerpf(DEPTH_MIN + 1.0, DEPTH_MAX - 1.0, float(index) / float(TARGET_COUNT - 1))
+	var pos := _world_from_view(ax, ay, depth)
+	if not PracticeRoom.contains_point(pos, SPHERE_RADIUS + 0.05):
+		pos.y = clampf(pos.y, PracticeRoom.FLOOR_TOP + SPHERE_RADIUS + 0.15, PracticeRoom.CEILING_Y - SPHERE_RADIUS)
+		pos.x = clampf(pos.x, -PracticeRoom.HALF_X + SPHERE_RADIUS, PracticeRoom.HALF_X - SPHERE_RADIUS)
+		pos.z = clampf(pos.z, PracticeRoom.Z_FRONT + SPHERE_RADIUS, -DEPTH_MIN)
+	return pos
 
 
 func _world_from_view(yaw_rad: float, pitch_rad: float, depth: float) -> Vector3:
@@ -138,7 +194,7 @@ func _defeat(index: int) -> void:
 	body.collision_layer = 0
 
 
-func _make_sphere(position: Vector3, index: int) -> StaticBody3D:
+func _make_sphere(position: Vector3, color: Color) -> StaticBody3D:
 	var body := StaticBody3D.new()
 	body.position = position
 	body.collision_layer = 1
@@ -149,7 +205,7 @@ func _make_sphere(position: Vector3, index: int) -> StaticBody3D:
 	sphere.radius = SPHERE_RADIUS
 	sphere.height = SPHERE_RADIUS * 2.0
 	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(0.74, 0.2 + index * 0.05, 0.16, 1.0)
+	material.albedo_color = color
 	material.roughness = 0.55
 	sphere.material = material
 	mesh_instance.mesh = sphere

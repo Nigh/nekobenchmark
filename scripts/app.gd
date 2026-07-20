@@ -163,9 +163,7 @@ func _process(_delta: float) -> void:
 			complete_summary()
 	elif page == "spheres":
 		if sphere_state.advance(now):
-			if sphere_state.stage == SphereState.Stage.AIMING:
-				sphere_aim.spawn_targets()
-			elif sphere_state.stage == SphereState.Stage.INVALID:
+			if sphere_state.stage == SphereState.Stage.INVALID:
 				sphere_aim.clear_targets()
 			_refresh_project()
 		if sphere_state.stage == SphereState.Stage.SUMMARY:
@@ -396,7 +394,8 @@ func _handle_sphere_input(event: InputEvent) -> void:
 	var now := Time.get_ticks_usec()
 	if sphere_state.stage == SphereState.Stage.READY or sphere_state.stage == SphereState.Stage.INVALID or sphere_state.stage == SphereState.Stage.NEXT:
 		if _reaction_event(event):
-			sphere_state.start_wait(now, rng)
+			sphere_state.start_gate()
+			sphere_aim.spawn_gate()
 			_refresh_project()
 		return
 	var is_fire: bool = (
@@ -408,11 +407,13 @@ func _handle_sphere_input(event: InputEvent) -> void:
 	var samples_before: int = sphere_state.reactions_us.size()
 	if not sphere_state.try_fire(now):
 		return
-	if sphere_state.stage == SphereState.Stage.INVALID:
-		sphere_aim.clear_targets()
+	var hit: int = sphere_aim.fire_ray()
+	if sphere_state.stage == SphereState.Stage.GATE:
+		if hit >= 0:
+			sphere_state.begin_aiming(now)
+			sphere_aim.spawn_targets()
 		_refresh_project()
 		return
-	var hit: int = sphere_aim.fire_ray()
 	if hit >= 0:
 		sphere_state.register_hit(now)
 	if sphere_state.reactions_us.size() > samples_before:
@@ -595,9 +596,9 @@ func _refresh_spheres() -> void:
 	var title := "SPHERE AIM"
 	var hint := "Press SPACE, Z, X, an arrow key, or click to begin."
 	match sphere_state.stage:
-		SphereState.Stage.WAITING:
-			title = "WAIT"
-			hint = "Do not fire yet."
+		SphereState.Stage.GATE:
+			title = "ARM"
+			hint = "Hit the green gate to start the round."
 		SphereState.Stage.AIMING:
 			title = "CLEAR TARGETS"
 			hint = "Aim and fire. %d left." % sphere_state.hits_remaining
@@ -606,7 +607,7 @@ func _refresh_spheres() -> void:
 			hint = "Click when ready."
 		SphereState.Stage.INVALID:
 			title = "ROUND INVALID"
-			hint = "Early fire or timeout. Click to retry."
+			hint = "Timeout. Click to retry."
 	hud_title.text = title
 	hud_hint.text = hint
 	hud_dots.text = _dots(sphere_state.reactions_us.size())
