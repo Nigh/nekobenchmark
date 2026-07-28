@@ -30,14 +30,28 @@ func _test_sphere_separation() -> void:
 
 
 func _test_osu() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 1
 	var state = Osu.new()
-	state.begin_round()
+	state.start_gate()
+	assert(state.stage == Osu.Stage.GATE and state.expected == 1)
+	state.begin_wait(100, rng)
+	assert(state.stage == Osu.Stage.WAITING)
+	state.early_input()
+	assert(state.stage == Osu.Stage.INVALID and state.reactions_us.is_empty())
+
+	state.reset()
+	state.start_gate()
+	state.begin_wait(100, rng)
+	assert(state.advance(state.deadline_us))
 	assert(state.stage == Osu.Stage.ACTIVE and state.expected == 1)
 	state.miss()
 	assert(state.stage == Osu.Stage.INVALID and state.reactions_us.is_empty())
 
 	state.reset()
-	state.begin_round()
+	state.start_gate()
+	state.begin_wait(100, rng)
+	state.advance(state.deadline_us)
 	state.hit_next(1_000_000)
 	assert(state.start_us == 1_000_000 and state.expected == 2)
 	for _i in Osu.TARGETS - 1:
@@ -45,13 +59,17 @@ func _test_osu() -> void:
 	assert(state.stage == Osu.Stage.NEXT)
 	assert(state.reactions_us == [600_000])
 
-	state.begin_round()
+	state.start_gate()
+	state.begin_wait(0, rng)
+	state.advance(state.deadline_us)
 	for trial_extra in 4:
 		for _i in Osu.TARGETS:
 			state.hit_next(10_000_000 + trial_extra * 1_000_000 + _i * 10_000)
 		if trial_extra < 3:
 			assert(state.stage == Osu.Stage.NEXT)
-			state.begin_round()
+			state.start_gate()
+			state.begin_wait(0, rng)
+			state.advance(state.deadline_us)
 	assert(state.stage == Osu.Stage.SUMMARY and state.reactions_us.size() == Osu.TRIALS)
 
 

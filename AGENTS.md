@@ -21,15 +21,20 @@ The bundled Maple Mono font is used directly as a Godot resource.
   right cover, crosses to the other cover over its one-second response window,
   then times out. After a target round ends, it greys, falls, and fades before
   it is removed.
-- `OSU` is a 2D sequence test: five rounds, each with six numbered circular
-  targets (radius 48 px). Targets form a path with identical adjacent spacing
-  (360 px). Only consecutive triples must be non-overlapping; non-adjacent
-  circles may share space. Only the next two numbered circles are visible at a
-  time. Hits fade out immediately, and a meteor-style streak runs from the next
-  circle's edge to the following circle's edge. The player must hit them in
-  order 1–6. Left mouse and react keys only count when the cursor is on the next
-  expected circle. Score is first valid hit to last hit. A miss or out-of-order
-  hit invalidates the whole five-round set.
+- `OSU` is a 2D sequence test: five rounds. Each round arms when the player
+  hits a fixed center green gate (play-area center). Hitting the gate starts a
+  random 1–3 second wait, then six numbered circular targets appear (radius
+  48 px). Targets form a path with identical adjacent spacing (360 px); the
+  first circle is also exactly one spacing from the green gate. Only consecutive
+  triples must be non-overlapping; non-adjacent circles may share space. Only
+  the next two numbered circles are visible at a time. Hits fade out
+  immediately, and a meteor-style streak runs from the next circle's edge to
+  the following circle's edge. The player must hit them in order 1–6. Left mouse
+  and react keys only count when the cursor is on the next expected circle (or
+  the green gate while arming). Score is first valid hit to last hit. An early
+  click during the wait, a miss, or an out-of-order hit invalidates the whole
+  five-round set. Misses on the gate do not invalidate. After a successful
+  round, the next round's green gate appears immediately (no ready click).
 - `Sphere Aim` is a 3D clear-out test: five rounds. Each round arms when the
   player hits a fixed center green gate (same world-center placement as Sens Lab
   at z = -8). Hitting the gate starts a random 1–3 second wait, then six

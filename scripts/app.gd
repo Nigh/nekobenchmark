@@ -17,6 +17,7 @@ const DARK := Color("#0b101e")
 const OSU_RADIUS := 48.0
 const OSU_SPACING := 360.0
 const OSU_FADE_SEC := 0.28
+const OSU_GATE_COLOR := Color(0.22, 0.82, 0.38, 1.0)
 
 @onready var menu: Control = $Menu
 @onready var color_reaction: Control = $ColorReaction
@@ -45,6 +46,8 @@ var osu_dots: Label
 var osu_circles_root: Control
 var osu_centers: Array[Vector2] = []
 var osu_circle_nodes: Array[Control] = []
+var osu_gate_center := Vector2.ZERO
+var osu_gate_node: Control = null
 var hud_title: Label
 var hud_hint: Label
 var hud_dots: Label
@@ -181,6 +184,9 @@ func _process(_delta: float) -> void:
 		if sphere_state.stage == SphereState.Stage.SUMMARY:
 			complete_summary()
 	elif page == "osu":
+		if osu_state.advance(now):
+			_spawn_osu_circles()
+			_refresh_project()
 		if osu_state.stage == OsuState.Stage.SUMMARY:
 			complete_summary()
 
@@ -364,20 +370,30 @@ func _handle_reaction_input(event: InputEvent) -> void:
 
 func _handle_osu_input(event: InputEvent) -> void:
 	var now := Time.get_ticks_usec()
-	if osu_state.stage == OsuState.Stage.READY or osu_state.stage == OsuState.Stage.INVALID or osu_state.stage == OsuState.Stage.NEXT:
+	if osu_state.stage == OsuState.Stage.READY or osu_state.stage == OsuState.Stage.INVALID:
 		if _reaction_event(event):
-			osu_state.begin_round()
-			_spawn_osu_circles()
-			_refresh_project()
+			_begin_osu_gate()
+		return
+	var is_click: bool = (
+		(event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT)
+		or _keyboard_react(event)
+	)
+	if not is_click:
+		return
+	if osu_state.stage == OsuState.Stage.WAITING:
+		osu_state.early_input()
+		_clear_osu_circles()
+		_refresh_project()
+		return
+	if osu_state.stage == OsuState.Stage.GATE:
+		if _osu_gate_hit(osu_page.get_local_mouse_position()):
+			osu_state.begin_wait(now, rng)
+			_clear_osu_circles()
+		_refresh_project()
 		return
 	if osu_state.stage != OsuState.Stage.ACTIVE:
 		return
 	# Mouse and react keys both require the cursor to be on the next circle.
-	if not (
-		(event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT)
-		or _keyboard_react(event)
-	):
-		return
 	var samples_before: int = osu_state.reactions_us.size()
 	var hit_index: int = _osu_circle_at(osu_page.get_local_mouse_position())
 	if hit_index + 1 == osu_state.expected:
@@ -391,8 +407,17 @@ func _handle_osu_input(event: InputEvent) -> void:
 	if osu_state.reactions_us.size() > samples_before:
 		var new_sample_index: int = osu_state.reactions_us.size() - 1
 		_show_score_flight(new_sample_index, osu_state.reactions_us[new_sample_index])
+		if osu_state.stage == OsuState.Stage.NEXT:
+			_begin_osu_gate()
+			return
 	if osu_state.stage == OsuState.Stage.INVALID:
 		_clear_osu_circles()
+	_refresh_project()
+
+
+func _begin_osu_gate() -> void:
+	osu_state.start_gate()
+	_spawn_osu_gate()
 	_refresh_project()
 
 
@@ -646,15 +671,21 @@ func _refresh_osu() -> void:
 	var title := "OSU"
 	var hint := "Press SPACE, Z, X, an arrow key, or click to begin."
 	match osu_state.stage:
+		OsuState.Stage.GATE:
+			title = "ARM"
+			hint = "Hit the green gate to arm the round."
+		OsuState.Stage.WAITING:
+			title = "WAIT"
+			hint = "Do not click yet."
 		OsuState.Stage.ACTIVE:
 			title = "HIT %d / %d" % [osu_state.expected, OsuState.TARGETS]
 			hint = "Aim at the next circle, then click or press a react key."
 		OsuState.Stage.NEXT:
 			title = "NEXT TRIAL"
-			hint = "Press when ready."
+			hint = "Hit the green gate when ready."
 		OsuState.Stage.INVALID:
 			title = "ROUND INVALID"
-			hint = "Missed or wrong circle. Press to retry."
+			hint = "Early start, miss, or wrong circle. Press to retry."
 	osu_title.text = title
 	osu_hint.text = hint
 	osu_dots.text = _dots(osu_state.reactions_us.size())
@@ -1003,15 +1034,34 @@ func _build_trial_list() -> void:
 	flight_score_layer.add_child(flight_score)
 
 
+func _spawn_osu_gate() -> void:
+	_clear_osu_circles()
+	osu_gate_center = _osu_play_area().get_center()
+	var gate := _make_osu_circle(0, osu_gate_center)
+	gate.ring_color = OSU_GATE_COLOR
+	gate.modulate.a = 1.0
+	osu_gate_node = gate
+	osu_circles_root.add_child(gate)
+
+
+func _osu_play_area() -> Rect2:
+	return Rect2(80, 120, 1120, 540)
+
+
+func _osu_gate_hit(point: Vector2) -> bool:
+	return point.distance_to(osu_gate_center) <= OSU_RADIUS
+
+
 func _spawn_osu_circles() -> void:
 	_clear_osu_circles()
-	var area := Rect2(80, 120, 1120, 540)
+	var area := _osu_play_area()
 	var inner := Rect2(
 		area.position.x + OSU_RADIUS,
 		area.position.y + OSU_RADIUS,
 		area.size.x - OSU_RADIUS * 2.0,
 		area.size.y - OSU_RADIUS * 2.0
 	)
+	osu_gate_center = area.get_center()
 	var built := false
 	for _attempt in 80:
 		if _try_build_osu_chain(inner):
@@ -1028,10 +1078,17 @@ func _spawn_osu_circles() -> void:
 
 func _try_build_osu_chain(inner: Rect2) -> bool:
 	osu_centers.clear()
-	osu_centers.append(Vector2(
-		rng.randf_range(inner.position.x, inner.end.x),
-		rng.randf_range(inner.position.y, inner.end.y)
-	))
+	var first_placed := false
+	for _angle_try in 48:
+		var angle := rng.randf() * TAU
+		var first := osu_gate_center + Vector2.from_angle(angle) * OSU_SPACING
+		if not inner.has_point(first):
+			continue
+		osu_centers.append(first)
+		first_placed = true
+		break
+	if not first_placed:
+		return false
 	while osu_centers.size() < OsuState.TARGETS:
 		var prev: Vector2 = osu_centers[osu_centers.size() - 1]
 		var placed := false
@@ -1057,7 +1114,11 @@ func _try_build_osu_chain(inner: Rect2) -> bool:
 func _build_osu_chain_fallback(inner: Rect2) -> void:
 	# ponytail: serpentine path with fixed edge length; O(1) layout if RNG chain fails.
 	osu_centers.clear()
-	var start := Vector2(inner.position.x + 40.0, inner.get_center().y)
+	var start := osu_gate_center + Vector2(OSU_SPACING, 0.0)
+	if not inner.has_point(start):
+		start = osu_gate_center + Vector2(-OSU_SPACING, 0.0)
+	if not inner.has_point(start):
+		start = osu_gate_center + Vector2(0.0, OSU_SPACING)
 	osu_centers.append(start)
 	var heading := 0.0
 	var guard := 0
@@ -1097,9 +1158,10 @@ func _make_osu_circle(number: int, center: Vector2) -> Control:
 	root.ring_color = ACCENT
 	root.fill_color = DARK
 	root.modulate.a = 0.0
-	var label := _label(str(number), 28, INK)
-	label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	root.add_child(label)
+	if number > 0:
+		var label := _label(str(number), 28, INK)
+		label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		root.add_child(label)
 	return root
 
 
@@ -1170,6 +1232,7 @@ func _clear_osu_circles() -> void:
 		node.queue_free()
 	osu_circle_nodes.clear()
 	osu_centers.clear()
+	osu_gate_node = null
 
 
 func _update_live_trial_time(now_us: int) -> void:
