@@ -67,6 +67,11 @@ The bundled Maple Mono font is used directly as a Godot resource.
   overlap, stay within a 90° view cone; the square rises so balls stay above the
   floor). Holding Alt shows the cursor so the slider can be dragged; releasing
   Alt recaptures look.
+- Scores measure the combined human + computer response chain, not isolated
+  human RT or hardware latency. Meaningful comparisons keep one side fixed:
+  different people on the same PC; the same person across PCs (device impact);
+  or the same person on the same PC over time (form). Comparing different
+  people on different PCs is not very meaningful.
 - Color Reaction and Corner Watch use a random 1–4 second delay, five trials, a
   one-second timeout, and false-start invalidation. Each valid non-final trial
   immediately begins its next random delay. `Time.get_ticks_usec()` measures
