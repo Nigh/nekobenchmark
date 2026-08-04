@@ -21,15 +21,20 @@ The bundled Maple Mono font is used directly as a Godot resource.
   right cover, crosses to the other cover over its one-second response window,
   then times out. After a target round ends, it greys, falls, and fades before
   it is removed.
-- `OSU` is a 2D sequence test: five rounds, each with six numbered circular
-  targets (radius 48 px). Targets form a path with identical adjacent spacing
-  (360 px). Only consecutive triples must be non-overlapping; non-adjacent
-  circles may share space. Only the next two numbered circles are visible at a
-  time. Hits fade out immediately, and a meteor-style streak runs from the next
-  circle's edge to the following circle's edge. The player must hit them in
-  order 1–6. Left mouse and react keys only count when the cursor is on the next
-  expected circle. Score is first valid hit to last hit. A miss or out-of-order
-  hit invalidates the whole five-round set.
+- `OSU` is a 2D sequence test: five rounds. Each round arms when the player
+  hits a fixed center green gate (play-area center). Hitting the gate starts a
+  random 1–3 second wait, then six numbered circular targets appear (radius
+  48 px). Targets form a path with identical adjacent spacing (360 px); the
+  first circle is also exactly one spacing from the green gate. Only consecutive
+  triples must be non-overlapping; non-adjacent circles may share space. Only
+  the next two numbered circles are visible at a time. Hits fade out
+  immediately, and a meteor-style streak runs from the next circle's edge to
+  the following circle's edge. The player must hit them in order 1–6. Left mouse
+  and react keys only count when the cursor is on the next expected circle (or
+  the green gate while arming). Score is first valid hit to last hit. An early
+  click during the wait, a miss, or an out-of-order hit invalidates the whole
+  five-round set. Misses on the gate do not invalidate. After a successful
+  round, the next round's green gate appears immediately (no ready click).
 - `Sphere Aim` is a 3D clear-out test: five rounds. Each round arms when the
   player hits a fixed center green gate (same world-center placement as Sens Lab
   at z = -8). Hitting the gate starts a random 1–3 second wait, then six
@@ -44,13 +49,14 @@ The bundled Maple Mono font is used directly as a Godot resource.
   Fires closer than 150 ms apart are ignored. Misses on the gate do not
   invalidate. After a successful clear, the next round's green gate appears
   immediately (no ready click).
-- All 3D cameras use a shared Overwatch-style config: horizontal FOV 103° with
-  `Camera3D.KEEP_WIDTH` (~70.5° vertical at 16:9). Shared 3D look sensitivity
-  is a multiplier (default 1.00 → 0.006 rad/pixel), clamped to `[0.10, 5.00]`,
-  adjusted in steps of 0.05 (wheel / nudge) or 0.01 when dragging the Sens Lab
-  slider, and persisted as `look_sens` in `user://scores.txt`.
-- All 3D modes share a bounded Overwatch-style practice room (floor underfoot,
-  walls, ceiling) with a low-contrast line grid that fades with distance.
+- All 3D cameras use a shared config tuned for comfortable, responsive look:
+  horizontal FOV 103° with `Camera3D.KEEP_WIDTH` (~70.5° vertical at 16:9).
+  Shared 3D look sensitivity is a multiplier (default 1.00 → 0.006 rad/pixel),
+  clamped to `[0.10, 5.00]`, adjusted in steps of 0.05 (wheel / nudge) or 0.01
+  when dragging the Sens Lab slider, and persisted as `look_sens` in
+  `user://scores.txt`.
+- All 3D modes share a bounded practice room (floor underfoot, walls, ceiling)
+  with a low-contrast line grid that fades with distance.
 - Menu entry `3D Look Sensitivity` opens an unscored practice lab: four spheres
   (radius 0.42, same as Sphere Aim) in a square; clearing them spawns a green
   center gate sphere; hitting the gate respawns the four. Sensitivity value and

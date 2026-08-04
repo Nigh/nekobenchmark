@@ -1,7 +1,7 @@
 shader_type spatial;
 render_mode cull_back, diffuse_burley, specular_schlick_ggx;
 
-// Overwatch practice-range style: muted surface + thin grid lines that fade with distance.
+// Muted surface + thin grid lines that fade with distance.
 uniform vec3 base_color: source_color = vec3(0.62, 0.63, 0.65);
 uniform vec3 line_color: source_color = vec3(0.50, 0.51, 0.54);
 uniform float tile_size = 3.0;

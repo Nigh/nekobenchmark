@@ -1,6 +1,6 @@
 extends RefCounted
 
-# Shared Overwatch-style practice room for all 3D modes.
+# Shared practice room for all 3D modes.
 const FLOOR_TOP := 0.0
 const CEILING_Y := 8.0
 const HALF_X := 12.0

@@ -22,10 +22,23 @@ func _run() -> void:
 	await process_frame
 	_press_key(KEY_SPACE)
 	await process_frame
+	var osu_state = app.get("osu_state")
+	assert(int(osu_state.get("stage")) == OsuState.Stage.GATE, "osu should arm from green gate")
+	assert(app.get("osu_gate_node") != null, "osu should show green gate")
+	var gate_center: Vector2 = app.get("osu_gate_center")
+	osu_state.call("begin_wait", Time.get_ticks_usec(), app.get("rng"))
+	app.call("_clear_osu_circles")
+	await process_frame
+	assert(int(osu_state.get("stage")) == OsuState.Stage.WAITING, "gate hit should start wait")
+	osu_state.set("deadline_us", Time.get_ticks_usec())
+	await process_frame
+	await process_frame
+	assert(int(osu_state.get("stage")) == OsuState.Stage.ACTIVE, "wait should spawn circles")
 	var centers: Array = app.get("osu_centers")
 	assert(centers.size() == 6, "expected 6 osu circles, got %d" % centers.size())
 	var spacing: float = float(app.get("OSU_SPACING"))
 	var radius: float = float(app.get("OSU_RADIUS"))
+	assert(is_equal_approx(centers[0].distance_to(gate_center), spacing), "first circle should be one spacing from gate")
 	for i in centers.size() - 1:
 		assert(is_equal_approx(centers[i].distance_to(centers[i + 1]), spacing), "adjacent spacing must match")
 	for i in centers.size() - 2:
@@ -36,7 +49,6 @@ func _run() -> void:
 		if node.visible:
 			visible_count += 1
 	assert(visible_count == 2, "osu should show only next two circles")
-	var osu_state = app.get("osu_state")
 	for i in 6:
 		osu_state.call("hit_next", Time.get_ticks_usec() + i * 10_000)
 	assert(int(osu_state.get("stage")) == OsuState.Stage.NEXT, "osu round should finish")

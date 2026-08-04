@@ -1,6 +1,6 @@
 extends RefCounted
 
-# Overwatch-style: horizontal FOV at any aspect (KEEP_WIDTH).
+# Shared horizontal FOV at any aspect (KEEP_WIDTH); tuned for comfortable look.
 # At 16:9 this is ~70.5° vertical.
 const HORIZONTAL_FOV := 103.0
 const BASE_LOOK_SENSITIVITY := 0.006
