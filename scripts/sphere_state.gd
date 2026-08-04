@@ -1,7 +1,7 @@
 class_name SphereState
 extends RefCounted
 
-enum Stage { READY, WAITING, AIMING, NEXT, INVALID, SUMMARY }
+enum Stage { READY, GATE, WAITING, AIMING, NEXT, INVALID, SUMMARY }
 
 const TRIALS := 5
 const TARGETS := 6
@@ -27,8 +27,18 @@ func reset() -> void:
 	reactions_us.clear()
 
 
-func start_wait(now_us: int, rng: RandomNumberGenerator) -> void:
+func start_gate() -> void:
 	if stage != Stage.READY and stage != Stage.INVALID and stage != Stage.NEXT:
+		return
+	deadline_us = 0
+	target_frame_us = 0
+	hits_remaining = TARGETS
+	last_fire_us = -FIRE_COOLDOWN_US
+	stage = Stage.GATE
+
+
+func begin_wait(now_us: int, rng: RandomNumberGenerator) -> void:
+	if stage != Stage.GATE:
 		return
 	deadline_us = now_us + rng.randi_range(WAIT_MIN_US, WAIT_MAX_US)
 	target_frame_us = 0
@@ -54,7 +64,7 @@ func try_fire(now_us: int) -> bool:
 	if stage == Stage.WAITING:
 		invalidate()
 		return true
-	if stage != Stage.AIMING:
+	if stage != Stage.GATE and stage != Stage.AIMING:
 		return false
 	if now_us - last_fire_us < FIRE_COOLDOWN_US:
 		return false

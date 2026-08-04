@@ -60,7 +60,76 @@ var sens_menu_button: Button
 var sens_slider_layer: Control
 var sens_slider: HSlider
 var sens_slider_label: Label
+var sens_slider_panel: Panel
+var sens_slider_panel_style: StyleBoxFlat
 var sens_slider_dragging := false
+var sens_chrome_tween: Tween
+var sens_chrome_full := false
+var sens_last_adjust_sec := -INF
+var profile_rows: Array[Label] = []
+var profile_radar: ProfileRadar
+var profile_hint: Label
+
+const SENS_PANEL_ALPHA_DIM := 0.16
+const SENS_PANEL_ALPHA_FULL := 0.72
+const SENS_CHROME_HOLD_SEC := 2.0
+
+
+class ProfileRadar extends Control:
+	var radii: Array[float] = [-1.0, -1.0, -1.0, -1.0]
+	var axis_labels: Array[String] = ["COLOR", "CORNER", "OSU", "SPHERE"]
+
+	func set_radii(values: Array[float]) -> void:
+		radii = values.duplicate()
+		queue_redraw()
+
+	func _draw() -> void:
+		var center := size * 0.5
+		var radius := minf(size.x, size.y) * 0.36
+		var ring := Color("#97a6bd")
+		ring.a = 0.22
+		var spoke := Color("#97a6bd")
+		spoke.a = 0.35
+		for step in 4:
+			draw_arc(center, radius * float(step + 1) * 0.25, 0.0, TAU, 64, ring, 1.0, true)
+		var tips: PackedVector2Array = []
+		for index in 4:
+			var angle := -PI * 0.5 + float(index) * TAU * 0.25
+			var tip := center + Vector2(cos(angle), sin(angle)) * radius
+			tips.append(tip)
+			draw_line(center, tip, spoke, 1.0, true)
+		var points: PackedVector2Array = []
+		var complete := radii.size() == 4
+		for index in 4:
+			if not complete or radii[index] < 0.0:
+				complete = false
+				break
+			var angle := -PI * 0.5 + float(index) * TAU * 0.25
+			points.append(center + Vector2(cos(angle), sin(angle)) * radius * radii[index])
+		if complete:
+			var fill := Color("#7790ff")
+			fill.a = 0.22
+			draw_colored_polygon(points, fill)
+			for index in 4:
+				draw_line(points[index], points[(index + 1) % 4], Color("#7790ff"), 2.0, true)
+				draw_circle(points[index], 3.5, Color("#7790ff"))
+		var font: Font = ThemeDB.fallback_font
+		var maple := load("res://assets/MapleMono-Regular.ttf")
+		if maple is Font:
+			font = maple
+		for index in 4:
+			var label_pos := tips[index] + (tips[index] - center).normalized() * 16.0
+			var text := axis_labels[index]
+			var text_size := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11)
+			draw_string(
+				font,
+				label_pos - text_size * 0.5,
+				text,
+				HORIZONTAL_ALIGNMENT_LEFT,
+				-1,
+				11,
+				Color("#97a6bd")
+			)
 
 
 func _ready() -> void:
@@ -84,6 +153,7 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if page == "sens":
 		_sync_sens_alt_cursor()
+		_update_sens_chrome()
 	if page.is_empty():
 		return
 	var now := Time.get_ticks_usec()
@@ -146,15 +216,6 @@ func _sens_slider_hit(pos: Vector2) -> bool:
 	if sens_slider == null:
 		return false
 	return Rect2(sens_slider.global_position, sens_slider.size).grow(8.0).has_point(pos)
-
-
-func _apply_sens_slider_at(x: float) -> void:
-	var left := sens_slider.global_position.x
-	var width := maxf(1.0, sens_slider.size.x)
-	var t := clampf((x - left) / width, 0.0, 1.0)
-	var value := lerpf(Camera3DConfig.LOOK_SENS_MIN, Camera3DConfig.LOOK_SENS_MAX, t)
-	value = snappedf(value, Camera3DConfig.LOOK_SENS_STEP)
-	_set_look_sensitivity(value, true)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -247,6 +308,9 @@ func enter_sens_lab() -> void:
 	sens_slider_layer.show()
 	_sync_sens_slider()
 	_set_sens_slider_interactive(false)
+	sens_last_adjust_sec = -INF
+	sens_chrome_full = true
+	_set_sens_chrome_visible(false)
 	$CanvasLayer/HUD.show()
 	_refresh_sens()
 
@@ -334,10 +398,9 @@ func _handle_osu_input(event: InputEvent) -> void:
 
 func _handle_sphere_input(event: InputEvent) -> void:
 	var now := Time.get_ticks_usec()
-	if sphere_state.stage == SphereState.Stage.READY or sphere_state.stage == SphereState.Stage.INVALID or sphere_state.stage == SphereState.Stage.NEXT:
+	if sphere_state.stage == SphereState.Stage.READY or sphere_state.stage == SphereState.Stage.INVALID:
 		if _reaction_event(event):
-			sphere_state.start_wait(now, rng)
-			_refresh_project()
+			_begin_sphere_gate()
 		return
 	var is_fire: bool = (
 		(event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT)
@@ -353,12 +416,27 @@ func _handle_sphere_input(event: InputEvent) -> void:
 		_refresh_project()
 		return
 	var hit: int = sphere_aim.fire_ray()
+	if sphere_state.stage == SphereState.Stage.GATE:
+		if hit >= 0:
+			sphere_state.begin_wait(now, rng)
+			sphere_aim.clear_targets()
+		_refresh_project()
+		return
 	if hit >= 0:
 		sphere_state.register_hit(now)
 	if sphere_state.reactions_us.size() > samples_before:
 		var new_sample_index: int = sphere_state.reactions_us.size() - 1
 		_show_score_flight(new_sample_index, sphere_state.reactions_us[new_sample_index])
 		sphere_aim.clear_targets()
+		if sphere_state.stage == SphereState.Stage.NEXT:
+			_begin_sphere_gate()
+			return
+	_refresh_project()
+
+
+func _begin_sphere_gate() -> void:
+	sphere_state.start_gate()
+	sphere_aim.spawn_gate()
 	_refresh_project()
 
 
@@ -396,6 +474,7 @@ func _handle_sens_input(event: InputEvent) -> void:
 
 func _nudge_look_sensitivity(delta: float) -> void:
 	_set_look_sensitivity(scores.look_sens + delta, true)
+	_note_sens_adjust()
 
 
 func _set_look_sensitivity(value: float, sync_slider: bool = true) -> void:
@@ -431,7 +510,58 @@ func _set_sens_slider_interactive(enabled: bool) -> void:
 
 
 func _on_sens_slider_changed(value: float) -> void:
-	_set_look_sensitivity(value, false)
+	_set_look_sensitivity(snappedf(value, Camera3DConfig.LOOK_SENS_FINE_STEP), false)
+	_note_sens_adjust()
+
+
+func _apply_sens_slider_at(x: float) -> void:
+	var left := sens_slider.global_position.x
+	var width := maxf(1.0, sens_slider.size.x)
+	var t := clampf((x - left) / width, 0.0, 1.0)
+	var value := lerpf(Camera3DConfig.LOOK_SENS_MIN, Camera3DConfig.LOOK_SENS_MAX, t)
+	value = snappedf(value, Camera3DConfig.LOOK_SENS_FINE_STEP)
+	_set_look_sensitivity(value, true)
+	_note_sens_adjust()
+
+
+func _note_sens_adjust() -> void:
+	sens_last_adjust_sec = Time.get_ticks_msec() * 0.001
+	_set_sens_chrome_visible(true)
+
+
+func _sens_chrome_wants_full() -> bool:
+	if page != "sens":
+		return false
+	if sens_lab.cursor_mode or sens_slider_dragging:
+		return true
+	return (Time.get_ticks_msec() * 0.001) - sens_last_adjust_sec < SENS_CHROME_HOLD_SEC
+
+
+func _update_sens_chrome() -> void:
+	_set_sens_chrome_visible(_sens_chrome_wants_full())
+
+
+func _set_sens_chrome_visible(full: bool) -> void:
+	if sens_slider_panel_style == null:
+		return
+	if full == sens_chrome_full:
+		return
+	sens_chrome_full = full
+	var target := SENS_PANEL_ALPHA_FULL if full else SENS_PANEL_ALPHA_DIM
+	if sens_chrome_tween != null:
+		sens_chrome_tween.kill()
+	sens_chrome_tween = create_tween()
+	sens_chrome_tween.tween_method(_set_sens_panel_alpha, sens_slider_panel_style.bg_color.a, target, 0.35)
+
+
+func _set_sens_panel_alpha(alpha: float) -> void:
+	if sens_slider_panel_style == null:
+		return
+	var color := sens_slider_panel_style.bg_color
+	color.a = alpha
+	sens_slider_panel_style.bg_color = color
+	if sens_slider_panel:
+		sens_slider_panel.add_theme_stylebox_override("panel", sens_slider_panel_style)
 
 
 func _refresh_project() -> void:
@@ -535,6 +665,9 @@ func _refresh_spheres() -> void:
 	var title := "SPHERE AIM"
 	var hint := "Press SPACE, Z, X, an arrow key, or click to begin."
 	match sphere_state.stage:
+		SphereState.Stage.GATE:
+			title = "ARM"
+			hint = "Hit the green gate to arm the round."
 		SphereState.Stage.WAITING:
 			title = "WAIT"
 			hint = "Do not fire yet."
@@ -543,7 +676,7 @@ func _refresh_spheres() -> void:
 			hint = "Aim and fire. %d left." % sphere_state.hits_remaining
 		SphereState.Stage.NEXT:
 			title = "NEXT TRIAL"
-			hint = "Click when ready."
+			hint = "Hit the green gate when ready."
 		SphereState.Stage.INVALID:
 			title = "ROUND INVALID"
 			hint = "Early fire or timeout. Click to retry."
@@ -625,12 +758,14 @@ func _build_menu() -> void:
 	menu.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_add_full_rect(menu, DARK)
 	var title := _label("NEKO / BENCHMARK", 34, INK)
-	title.position = Vector2(0, 36)
-	title.size = Vector2(1280, 44)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	title.position = Vector2(40, 36)
+	title.size = Vector2(560, 44)
 	menu.add_child(title)
 	var subtitle := _label("SELECT A TEST", 18, MUTED)
-	subtitle.position = Vector2(0, 84)
-	subtitle.size = Vector2(1280, 26)
+	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	subtitle.position = Vector2(40, 84)
+	subtitle.size = Vector2(560, 26)
 	menu.add_child(subtitle)
 	var projects := [
 		{"id": "color", "name": "COLOR REACTION"},
@@ -641,24 +776,67 @@ func _build_menu() -> void:
 	menu_buttons.clear()
 	for index in projects.size():
 		var button := Button.new()
-		button.position = Vector2(340, 120 + index * 88)
-		button.size = Vector2(600, 76)
+		button.position = Vector2(40, 120 + index * 88)
+		button.size = Vector2(560, 76)
 		button.text = projects[index].name
 		button.add_theme_font_size_override("font_size", 20)
 		button.pressed.connect(enter_project.bind(projects[index].id))
 		menu.add_child(button)
 		menu_buttons.append(button)
 	sens_menu_button = Button.new()
-	sens_menu_button.position = Vector2(340, 472)
-	sens_menu_button.size = Vector2(600, 76)
+	sens_menu_button.position = Vector2(40, 472)
+	sens_menu_button.size = Vector2(560, 76)
 	sens_menu_button.text = "3D LOOK SENSITIVITY"
 	sens_menu_button.add_theme_font_size_override("font_size", 20)
 	sens_menu_button.pressed.connect(enter_sens_lab)
 	menu.add_child(sens_menu_button)
 	var footer := _label("Choose a test with the mouse.  ESC: QUIT", 15, MUTED)
-	footer.position = Vector2(0, 680)
-	footer.size = Vector2(1280, 28)
+	footer.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	footer.position = Vector2(40, 680)
+	footer.size = Vector2(560, 28)
 	menu.add_child(footer)
+	_build_profile_card()
+
+
+func _build_profile_card() -> void:
+	var card := Panel.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.0, 0.0, 0.0, 0.45)
+	style.corner_radius_top_left = 12
+	style.corner_radius_top_right = 12
+	style.corner_radius_bottom_left = 12
+	style.corner_radius_bottom_right = 12
+	style.content_margin_left = 20
+	style.content_margin_top = 16
+	style.content_margin_right = 20
+	style.content_margin_bottom = 16
+	card.add_theme_stylebox_override("panel", style)
+	card.position = Vector2(640, 100)
+	card.size = Vector2(600, 548)
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	menu.add_child(card)
+	var heading := _label("BEST SCORES", 16, MUTED)
+	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	heading.position = Vector2(660, 118)
+	heading.size = Vector2(560, 24)
+	menu.add_child(heading)
+	profile_rows.clear()
+	for index in ScoreStore.PROFILE_AXES.size():
+		var row := _label("", 16, INK)
+		row.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		row.position = Vector2(660, 152 + index * 28)
+		row.size = Vector2(560, 26)
+		menu.add_child(row)
+		profile_rows.append(row)
+	profile_radar = ProfileRadar.new()
+	profile_radar.position = Vector2(700, 280)
+	profile_radar.size = Vector2(480, 300)
+	profile_radar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	menu.add_child(profile_radar)
+	profile_hint = _label("", 13, MUTED)
+	profile_hint.position = Vector2(640, 600)
+	profile_hint.size = Vector2(600, 24)
+	menu.add_child(profile_hint)
 
 
 func _build_color_page() -> void:
@@ -742,18 +920,18 @@ func _build_sens_slider() -> void:
 	sens_slider_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	sens_slider_layer.hide()
 	$CanvasLayer.add_child(sens_slider_layer)
-	var panel := Panel.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.0, 0.0, 0.0, 0.72)
-	style.corner_radius_top_left = 12
-	style.corner_radius_top_right = 12
-	style.corner_radius_bottom_left = 12
-	style.corner_radius_bottom_right = 12
-	panel.add_theme_stylebox_override("panel", style)
-	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.position = Vector2(290, 510)
-	panel.size = Vector2(700, 96)
-	sens_slider_layer.add_child(panel)
+	sens_slider_panel = Panel.new()
+	sens_slider_panel_style = StyleBoxFlat.new()
+	sens_slider_panel_style.bg_color = Color(0.0, 0.0, 0.0, SENS_PANEL_ALPHA_DIM)
+	sens_slider_panel_style.corner_radius_top_left = 12
+	sens_slider_panel_style.corner_radius_top_right = 12
+	sens_slider_panel_style.corner_radius_bottom_left = 12
+	sens_slider_panel_style.corner_radius_bottom_right = 12
+	sens_slider_panel.add_theme_stylebox_override("panel", sens_slider_panel_style)
+	sens_slider_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sens_slider_panel.position = Vector2(290, 510)
+	sens_slider_panel.size = Vector2(700, 96)
+	sens_slider_layer.add_child(sens_slider_panel)
 	sens_slider_label = _label("LOOK SENSITIVITY  1.00", 16, INK)
 	sens_slider_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	sens_slider_label.position = Vector2(310, 518)
@@ -762,13 +940,14 @@ func _build_sens_slider() -> void:
 	sens_slider = HSlider.new()
 	sens_slider.min_value = Camera3DConfig.LOOK_SENS_MIN
 	sens_slider.max_value = Camera3DConfig.LOOK_SENS_MAX
-	sens_slider.step = Camera3DConfig.LOOK_SENS_STEP
+	sens_slider.step = Camera3DConfig.LOOK_SENS_FINE_STEP
 	sens_slider.value = scores.look_sens
 	sens_slider.position = Vector2(330, 558)
 	sens_slider.size = Vector2(620, 28)
 	sens_slider.focus_mode = Control.FOCUS_NONE
 	sens_slider.value_changed.connect(_on_sens_slider_changed)
 	sens_slider_layer.add_child(sens_slider)
+	sens_chrome_full = false
 	_set_sens_slider_interactive(false)
 
 
@@ -1048,17 +1227,27 @@ func _finish_score_flight(index: int, score_text: String) -> void:
 
 
 func _update_best_scores() -> void:
-	var labels := [
-		{"name": "COLOR REACTION", "key": "color"},
-		{"name": "CORNER WATCH", "key": "shooter"},
-		{"name": "OSU", "key": "osu"},
-		{"name": "SPHERE AIM", "key": "spheres"},
-	]
 	for index in menu_buttons.size():
-		var best := scores.get_best(labels[index].key)
-		menu_buttons[index].text = "%s\nBEST: %s" % [labels[index].name, "--" if best == 0.0 else "%.1f ms" % best]
+		menu_buttons[index].text = ScoreStore.PROFILE_AXES[index].name
 	if sens_menu_button:
 		sens_menu_button.text = "3D LOOK SENSITIVITY\nCURRENT: %.2f" % scores.look_sens
+	var complete := true
+	for index in ScoreStore.PROFILE_AXES.size():
+		var axis: Dictionary = ScoreStore.PROFILE_AXES[index]
+		var best := scores.get_best(axis.key)
+		var value := "--" if best == 0.0 else "%.1f ms" % best
+		if best == 0.0:
+			complete = false
+		if index < profile_rows.size():
+			profile_rows[index].text = "%s    %s" % [axis.label, value]
+	if profile_radar:
+		profile_radar.set_radii(scores.profile_radii())
+	if profile_hint:
+		profile_hint.text = (
+			"ENGINE TIMING · NOT PHOTON"
+			if complete
+			else "COMPLETE ALL 4 TO FILL THE RADAR"
+		)
 
 
 func _label(text: String, font_size: int, color: Color) -> Label:

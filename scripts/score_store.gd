@@ -5,11 +5,33 @@ const SCORE_PATH := "user://scores.txt"
 const TEMP_PATH := "user://scores.txt.tmp"
 const Camera3DConfig = preload("res://scripts/camera_3d_config.gd")
 
+# ponytail: fixed per-mode windows so radar axes are comparable; retune from real runs.
+const PROFILE_AXES := [
+	{"key": "color", "label": "COLOR", "name": "COLOR REACTION", "lo": 120.0, "hi": 400.0},
+	{"key": "shooter", "label": "CORNER", "name": "CORNER WATCH", "lo": 150.0, "hi": 500.0},
+	{"key": "osu", "label": "OSU", "name": "OSU", "lo": 400.0, "hi": 2000.0},
+	{"key": "spheres", "label": "SPHERE", "name": "SPHERE AIM", "lo": 500.0, "hi": 3000.0},
+]
+
 var color := 0.0
 var shooter := 0.0
 var osu := 0.0
 var spheres := 0.0
 var look_sens := Camera3DConfig.LOOK_SENS_DEFAULT
+
+
+# Lower ms → higher radius. Missing (0) returns -1 so the UI can skip the fill.
+static func radar_radius(ms: float, lo: float, hi: float) -> float:
+	if ms <= 0.0:
+		return -1.0
+	return clampf((hi - ms) / (hi - lo), 0.0, 1.0)
+
+
+func profile_radii() -> Array[float]:
+	var out: Array[float] = []
+	for axis in PROFILE_AXES:
+		out.append(radar_radius(get_best(axis.key), axis.lo, axis.hi))
+	return out
 
 
 func load_scores() -> void:

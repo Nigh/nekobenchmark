@@ -3,13 +3,16 @@ extends SceneTree
 const Osu := preload("res://scripts/osu_state.gd")
 const Sphere := preload("res://scripts/sphere_state.gd")
 const SphereAimScr := preload("res://scripts/sphere_aim.gd")
+const SensLabScr := preload("res://scripts/sens_lab.gd")
 const Scores := preload("res://scripts/score_store.gd")
+const Camera3DConfig := preload("res://scripts/camera_3d_config.gd")
 
 
 func _init() -> void:
 	_test_osu()
 	_test_sphere()
 	_test_sphere_separation()
+	assert(is_equal_approx(Camera3DConfig.LOOK_SENS_FINE_STEP, 0.01))
 	var result: Dictionary = Scores.statistics([100_000, 200_000, 300_000, 400_000, 500_000])
 	assert(is_equal_approx(result.median, 300.0))
 	print("sequence_state_test: PASS")
@@ -18,8 +21,11 @@ func _init() -> void:
 
 func _test_sphere_separation() -> void:
 	var min_sep: float = SphereAimScr.SPHERE_RADIUS * 2.0 + 0.45
+	assert(is_equal_approx(SphereAimScr.SPHERE_RADIUS, 0.42))
+	assert(is_equal_approx(SensLabScr.SPHERE_RADIUS, 0.42))
 	assert(is_equal_approx(SphereAimScr.MIN_SEPARATION, min_sep))
 	assert(is_equal_approx(SphereAimScr.HIT_RADIUS_SCALE, 1.1))
+	assert(is_equal_approx(SphereAimScr.GATE_Z, SensLabScr.TARGET_Z))
 	assert(SphereAimScr.MIN_SEPARATION > SphereAimScr.SPHERE_RADIUS * 2.0)
 
 
@@ -53,27 +59,32 @@ func _test_sphere() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 1
 	var state = Sphere.new()
-	state.start_wait(100, rng)
+	state.start_gate()
+	assert(state.stage == Sphere.Stage.GATE)
+	state.begin_wait(100, rng)
 	assert(state.stage == Sphere.Stage.WAITING)
 	state.try_fire(200)
 	assert(state.stage == Sphere.Stage.INVALID and state.reactions_us.is_empty())
 
 	state.reset()
-	state.start_wait(100, rng)
+	state.start_gate()
+	state.begin_wait(100, rng)
 	assert(state.advance(state.deadline_us))
 	assert(state.stage == Sphere.Stage.AIMING)
 	assert(state.advance(state.target_frame_us + Sphere.TIMEOUT_US + 1))
 	assert(state.stage == Sphere.Stage.INVALID)
 
 	state.reset()
-	state.start_wait(100, rng)
+	state.start_gate()
+	state.begin_wait(100, rng)
 	state.advance(state.deadline_us)
 	assert(state.try_fire(state.target_frame_us + 10_000))
 	assert(not state.try_fire(state.target_frame_us + 20_000))
 	assert(state.try_fire(state.target_frame_us + 10_000 + Sphere.FIRE_COOLDOWN_US))
 
 	state.reset()
-	state.start_wait(100, rng)
+	state.start_gate()
+	state.begin_wait(0, rng)
 	state.advance(state.deadline_us)
 	var appear: int = state.target_frame_us
 	for index in Sphere.TARGETS:
