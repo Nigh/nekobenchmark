@@ -1,6 +1,8 @@
 class_name CornerWatch
 extends Node3D
 
+const Palette = preload("res://scripts/app_theme.gd")
+
 const Camera3DConfig = preload("res://scripts/camera_3d_config.gd")
 const PracticeRoom = preload("res://scripts/practice_room.gd")
 
@@ -29,7 +31,7 @@ func _ready() -> void:
 	PracticeRoom.build(self)
 	Camera3DConfig.apply(camera)
 	defeat_material = StandardMaterial3D.new()
-	defeat_material.albedo_color = Color(0.28, 0.3, 0.33, 1.0)
+	defeat_material.albedo_color = Palette.BORDER
 	defeat_material.roughness = 0.9
 	defeat_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	enemy.visible = false
@@ -94,7 +96,7 @@ func _process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if active and event is InputEventMouseMotion:
+	if active and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and event is InputEventMouseMotion:
 		var sens := Camera3DConfig.look_radians_per_pixel(look_sensitivity)
 		yaw = clampf(yaw - event.relative.x * sens, YAW_MIN, YAW_MAX)
 		pitch -= event.relative.y * sens

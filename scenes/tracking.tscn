@@ -1,0 +1,14 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/tracking.gd" id="1_script"]
+
+[node name="Tracking" type="Node3D"]
+script = ExtResource("1_script")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-52, -28, 0)
+light_energy = 1.25
+
+[node name="Camera3D" type="Camera3D" parent="."]
+position = Vector3(0, 1.4, 0)
+current = false

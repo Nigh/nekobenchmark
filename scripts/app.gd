@@ -10,14 +10,19 @@ const CornerWatch = preload("res://scripts/corner_watch.gd")
 const SphereAim = preload("res://scripts/sphere_aim.gd")
 const SensLab = preload("res://scripts/sens_lab.gd")
 
-const INK := Color("#ebf0f9")
-const MUTED := Color("#97a6bd")
-const ACCENT := Color("#7790ff")
-const DARK := Color("#0b101e")
+const Palette = preload("res://scripts/app_theme.gd")
+const TrackingState = preload("res://scripts/tracking_state.gd")
+const HistoryStore = preload("res://scripts/history_store.gd")
+const HistoryPage = preload("res://scripts/history_page.gd")
+const TrendChart = preload("res://scripts/trend_chart.gd")
+const INK := Palette.INK
+const MUTED := Palette.MUTED
+const ACCENT := Palette.PRIMARY
+const DARK := Palette.BASE
 const OSU_RADIUS := 48.0
 const OSU_SPACING := 360.0
 const OSU_FADE_SEC := 0.28
-const OSU_GATE_COLOR := Color(0.22, 0.82, 0.38, 1.0)
+const OSU_GATE_COLOR := Palette.SUCCESS
 
 @onready var menu: Control = $Menu
 @onready var color_reaction: Control = $ColorReaction
@@ -25,6 +30,7 @@ const OSU_GATE_COLOR := Color(0.22, 0.82, 0.38, 1.0)
 @onready var corner_watch: CornerWatch = $CornerWatch
 @onready var sphere_aim: SphereAim = $SphereAim
 @onready var sens_lab: SensLab = $SensLab
+@onready var tracking: Node3D = $Tracking
 @onready var summary: Control = $Summary
 @onready var trial_list: Control = $TrialList
 @onready var flight_score_layer: Control = $FlightScore
@@ -39,6 +45,7 @@ var color_background: ColorRect
 var color_title: Label
 var color_hint: Label
 var color_dots: Label
+var color_footer: Label
 var osu_background: ColorRect
 var osu_title: Label
 var osu_hint: Label
@@ -59,7 +66,6 @@ var flight_score: Label
 var score_flight: Tween
 var score_flight_active := false
 var menu_buttons: Array[Button] = []
-var sens_menu_button: Button
 var sens_slider_layer: Control
 var sens_slider: HSlider
 var sens_slider_label: Label
@@ -70,74 +76,31 @@ var sens_chrome_tween: Tween
 var sens_chrome_full := false
 var sens_last_adjust_sec := -INF
 var profile_rows: Array[Label] = []
-var profile_radar: ProfileRadar
-var profile_hint: Label
+var profile_charts: Array[Control] = []
+var tracking_state = TrackingState.new()
+var history = HistoryStore.new()
+var history_page: Control
+var settings_page: Control
+var settings_value: Label
+var settings_slider: HSlider
+var result_snapshot: Dictionary = {}
+var summary_tag: LineEdit
+var save_button: Button
+var save_status: Label
+var summary_time: Label
 
 const SENS_PANEL_ALPHA_DIM := 0.16
 const SENS_PANEL_ALPHA_FULL := 0.72
 const SENS_CHROME_HOLD_SEC := 2.0
 
 
-class ProfileRadar extends Control:
-	var radii: Array[float] = [-1.0, -1.0, -1.0, -1.0]
-	var axis_labels: Array[String] = ["COLOR", "CORNER", "OSU", "SPHERE"]
-
-	func set_radii(values: Array[float]) -> void:
-		radii = values.duplicate()
-		queue_redraw()
-
-	func _draw() -> void:
-		var center := size * 0.5
-		var radius := minf(size.x, size.y) * 0.36
-		var ring := Color("#97a6bd")
-		ring.a = 0.22
-		var spoke := Color("#97a6bd")
-		spoke.a = 0.35
-		for step in 4:
-			draw_arc(center, radius * float(step + 1) * 0.25, 0.0, TAU, 64, ring, 1.0, true)
-		var tips: PackedVector2Array = []
-		for index in 4:
-			var angle := -PI * 0.5 + float(index) * TAU * 0.25
-			var tip := center + Vector2(cos(angle), sin(angle)) * radius
-			tips.append(tip)
-			draw_line(center, tip, spoke, 1.0, true)
-		var points: PackedVector2Array = []
-		var complete := radii.size() == 4
-		for index in 4:
-			if not complete or radii[index] < 0.0:
-				complete = false
-				break
-			var angle := -PI * 0.5 + float(index) * TAU * 0.25
-			points.append(center + Vector2(cos(angle), sin(angle)) * radius * radii[index])
-		if complete:
-			var fill := Color("#7790ff")
-			fill.a = 0.22
-			draw_colored_polygon(points, fill)
-			for index in 4:
-				draw_line(points[index], points[(index + 1) % 4], Color("#7790ff"), 2.0, true)
-				draw_circle(points[index], 3.5, Color("#7790ff"))
-		var font: Font = ThemeDB.fallback_font
-		var maple := load("res://assets/MapleMono-Regular.ttf")
-		if maple is Font:
-			font = maple
-		for index in 4:
-			var label_pos := tips[index] + (tips[index] - center).normalized() * 16.0
-			var text := axis_labels[index]
-			var text_size := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11)
-			draw_string(
-				font,
-				label_pos - text_size * 0.5,
-				text,
-				HORIZONTAL_ALIGNMENT_LEFT,
-				-1,
-				11,
-				Color("#97a6bd")
-			)
-
-
 func _ready() -> void:
 	rng.randomize()
 	scores.load_scores()
+	history.load_history()
+	var app_theme := Palette.create()
+	for root in [menu, color_reaction, osu_page, summary, trial_list, flight_score_layer, $CanvasLayer/HUD]:
+		root.theme = app_theme
 	_apply_look_sensitivity()
 	_ensure_input_actions()
 	Input.use_accumulated_input = false
@@ -150,6 +113,11 @@ func _ready() -> void:
 	_build_sens_slider()
 	_build_summary()
 	_build_trial_list()
+	_build_settings()
+	history_page = HistoryPage.new()
+	add_child(history_page)
+	history_page.setup(history)
+	history_page.back_requested.connect(show_menu)
 	show_menu()
 
 
@@ -158,6 +126,8 @@ func _process(_delta: float) -> void:
 		_sync_sens_alt_cursor()
 		_update_sens_chrome()
 	if page.is_empty():
+		return
+	if summary.visible:
 		return
 	var now := Time.get_ticks_usec()
 	_update_live_trial_time(now)
@@ -188,6 +158,20 @@ func _process(_delta: float) -> void:
 			_spawn_osu_circles()
 			_refresh_project()
 		if osu_state.stage == OsuState.Stage.SUMMARY:
+			complete_summary()
+
+	elif page == "tracking":
+		var seconds := 0.0
+		if tracking_state.stage == TrackingState.Stage.ACTIVE:
+			seconds = clampf(float(now - tracking_state.start_us) / 1_000_000.0, 0.0, 10.0)
+		tracking.move_target(tracking_state.coverage.size(), seconds)
+		if tracking_state.advance(now, tracking.covered(), tracking.error_degrees()):
+			var index: int = tracking_state.coverage.size() - 1
+			_show_score_text_flight(index, "%.1f %%" % tracking_state.coverage[index])
+			if tracking_state.stage == TrackingState.Stage.PREPARING:
+				tracking.move_target(tracking_state.coverage.size(), 0.0)
+		_refresh_tracking()
+		if tracking_state.stage == TrackingState.Stage.SUMMARY:
 			complete_summary()
 
 
@@ -237,10 +221,19 @@ func _unhandled_input(event: InputEvent) -> void:
 	if page == "sens":
 		_handle_sens_input(event)
 		return
+	if summary.visible and summary_tag.has_focus():
+		return
 	if event.is_action_pressed("restart") and _summary_visible():
 		_restart_project()
 		return
+	if summary.visible:
+		return
 	match page:
+		"tracking":
+			if _reaction_event(event) and tracking_state.stage in [TrackingState.Stage.READY, TrackingState.Stage.INVALID]:
+				tracking_state.reset()
+				_reset_trial_list()
+				tracking_state.prepare(Time.get_ticks_usec())
 		"color", "corner":
 			_handle_reaction_input(event)
 		"osu":
@@ -251,6 +244,12 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func show_menu() -> void:
 	page = ""
+	result_snapshot.clear()
+	tracking_state.reset()
+	tracking.set_active(false)
+	settings_page.hide()
+	history_page.hide()
+	_reset_trial_list()
 	state.reset()
 	osu_state.reset()
 	sphere_state.reset()
@@ -276,6 +275,12 @@ func enter_project(project: String) -> void:
 		enter_sens_lab()
 		return
 	page = project
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	result_snapshot.clear()
+	tracking_state.reset()
+	tracking.set_active(page == "tracking")
+	settings_page.hide()
+	history_page.hide()
 	state.reset()
 	osu_state.reset()
 	sphere_state.reset()
@@ -292,12 +297,17 @@ func enter_project(project: String) -> void:
 	sens_lab.set_active(false)
 	_apply_look_sensitivity()
 	_update_trial_list_opacity()
-	$CanvasLayer/HUD.visible = page == "corner" or page == "spheres"
+	$CanvasLayer/HUD.visible = page in ["corner", "spheres", "tracking"]
 	_refresh_project()
 
 
 func enter_sens_lab() -> void:
 	page = "sens"
+	result_snapshot.clear()
+	tracking.set_active(false)
+	settings_page.hide()
+	history_page.hide()
+	_reset_trial_list()
 	state.reset()
 	osu_state.reset()
 	sphere_state.reset()
@@ -322,30 +332,72 @@ func enter_sens_lab() -> void:
 
 
 func complete_summary() -> void:
-	if summary.visible or score_flight_active:
+	if summary.visible or not _summary_visible():
 		return
-	var samples := _active_samples()
-	var result := ScoreStore.statistics(samples)
-	scores.update(_score_key(), result.median)
-	summary_text.text = "FIVE-TRIAL RESULT\n\n%.1f ms\nMEDIAN TIME\n\nMEAN  %.1f ms\nSTD DEV  %.1f ms\n\nR: RETRY    ESC: MENU" % [result.median, result.mean, result.deviation]
+	_freeze_result()
+	if score_flight_active or result_snapshot.is_empty():
+		return
+	var result: Dictionary = result_snapshot.stats
+	var key := _score_key()
+	var current := scores.get_best(key)
+	var is_best: bool = (current < 0.0 or result.median > current) if key == "tracking" else ScoreStore.is_new_best(current, result.median)
+	var saved_best := scores.update(key, result.median) if is_best else true
+	var unit := "%" if key == "tracking" else "ms"
+	summary_text.text = "%s / FIVE-ROUND RESULT\n\n%.1f %s\nMEDIAN %s\n\nMEAN  %.1f %s    STD DEV  %.1f %s" % [_project_name(key), result.median, unit, "COVERAGE" if key == "tracking" else "TIME", result.mean, unit, result.deviation, unit]
+	if key == "tracking":
+		var average := 0.0
+		for degrees in result_snapshot.errors_degrees:
+			average += degrees / 5.0
+		summary_text.text += "\nMEAN ANGULAR ERROR  %.2f deg" % average
+	summary_time.text = "Completed: %s (local time)" % result_snapshot.local_time
+	summary_tag.clear()
+	save_button.text = "Save Result"
+	save_button.disabled = not history.writable
+	summary_tag.editable = history.writable
+	save_status.text = history.error if not history.writable else ("Best score could not be saved. Retry Save Result." if not saved_best else "Optional tag: device, setup, or form")
 	$CanvasLayer/HUD.hide()
+	corner_watch.active = false
+	sphere_aim.active = false
+	tracking.active = false
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	summary.show()
 	_update_trial_list_opacity()
 
 
+func _freeze_result() -> void:
+	if not result_snapshot.is_empty():
+		return
+	var key := _score_key()
+	var samples: Array = tracking_state.coverage if key == "tracking" else _active_samples()
+	if samples.size() == 5:
+		result_snapshot = HistoryStore.snapshot(key, samples, scores.look_sens, tracking_state.errors if key == "tracking" else [])
+
+
+func _save_result() -> void:
+	if history.save_record(result_snapshot, summary_tag.text):
+		save_button.text = "Saved"
+		save_button.disabled = true
+		summary_tag.editable = false
+		save_status.text = "Saved to History"
+		var key := _score_key()
+		var candidate: float = result_snapshot.stats.median
+		var current := scores.get_best(key)
+		if (key == "tracking" and (current < 0.0 or candidate > current)) or (key != "tracking" and ScoreStore.is_new_best(current, candidate)):
+			if not scores.update(key, candidate):
+				save_status.text += " (best score write failed)"
+	else:
+		save_status.text = history.error
+
+
+func _project_name(key: String) -> String:
+	for mode in ScoreStore.PROJECTS:
+		if mode.key == key:
+			return mode.name
+	return key
+
+
 func _restart_project() -> void:
-	state.reset()
-	osu_state.reset()
-	sphere_state.reset()
-	_clear_osu_circles()
-	summary.hide()
-	_reset_trial_list()
-	_update_trial_list_opacity()
-	if page == "corner" or page == "spheres":
-		$CanvasLayer/HUD.show()
-		if page == "spheres":
-			sphere_aim.clear_targets()
-	_refresh_project()
+	enter_project(page)
 
 
 func _handle_reaction_input(event: InputEvent) -> void:
@@ -503,7 +555,7 @@ func _nudge_look_sensitivity(delta: float) -> void:
 
 
 func _set_look_sensitivity(value: float, sync_slider: bool = true) -> void:
-	scores.set_look_sensitivity(value)
+	var saved := scores.set_look_sensitivity(value)
 	_apply_look_sensitivity()
 	if sync_slider:
 		_sync_sens_slider()
@@ -511,12 +563,16 @@ func _set_look_sensitivity(value: float, sync_slider: bool = true) -> void:
 		sens_slider_label.text = "LOOK SENSITIVITY  %.2f" % scores.look_sens
 	if page == "sens":
 		_refresh_sens()
+	if settings_value:
+		settings_value.text = "LOOK SENSITIVITY  %.2f%s" % [scores.look_sens, "" if saved else "  (save failed)"]
+		settings_slider.set_value_no_signal(scores.look_sens)
 
 
 func _apply_look_sensitivity() -> void:
 	corner_watch.set_look_sensitivity(scores.look_sens)
 	sphere_aim.set_look_sensitivity(scores.look_sens)
 	sens_lab.set_look_sensitivity(scores.look_sens)
+	tracking.set_look_sensitivity(scores.look_sens)
 
 
 func _sync_sens_slider() -> void:
@@ -609,6 +665,8 @@ func _refresh_project() -> void:
 			_refresh_spheres()
 		"sens":
 			_refresh_sens()
+		"tracking":
+			_refresh_tracking()
 
 
 func _refresh_sens() -> void:
@@ -622,18 +680,18 @@ func _refresh_sens() -> void:
 
 
 func _refresh_color() -> void:
-	var title := "COLOR REACTION"
+	var title := "2D REACTION"
 	var hint := "Press SPACE, Z, X, an arrow key, or click to begin."
 	var background := DARK
 	match state.stage:
 		ReactionState.Stage.WAITING:
 			title = "WAIT"
 			hint = "Do not press yet."
-			background = Color("#ba353e")
+			background = Palette.ERROR
 		ReactionState.Stage.TARGET:
 			title = "NOW"
 			hint = "PRESS OR CLICK"
-			background = Color("#21aa5e")
+			background = Palette.SUCCESS
 		ReactionState.Stage.NEXT:
 			title = "NEXT TRIAL"
 			hint = "Press when ready."
@@ -641,13 +699,18 @@ func _refresh_color() -> void:
 			title = "ROUND INVALID"
 			hint = "False start or timeout. Press to retry."
 	color_background.color = background
+	var foreground := Palette.SURFACE if state.stage in [ReactionState.Stage.WAITING, ReactionState.Stage.TARGET] else INK
+	color_title.add_theme_color_override("font_color", foreground)
+	color_hint.add_theme_color_override("font_color", foreground)
+	color_dots.add_theme_color_override("font_color", foreground)
+	color_footer.add_theme_color_override("font_color", foreground)
 	color_title.text = title
 	color_hint.text = hint
 	color_dots.text = _dots(state.reactions_us.size())
 
 
 func _refresh_corner() -> void:
-	var title := "CORNER WATCH"
+	var title := "3D REACTION"
 	var hint := "Move the mouse. Click when the enemy appears."
 	if state.stage == ReactionState.Stage.NEXT:
 		title = "NEXT TRIAL"
@@ -693,7 +756,7 @@ func _refresh_osu() -> void:
 
 
 func _refresh_spheres() -> void:
-	var title := "SPHERE AIM"
+	var title := "3D AIM"
 	var hint := "Press SPACE, Z, X, an arrow key, or click to begin."
 	match sphere_state.stage:
 		SphereState.Stage.GATE:
@@ -741,6 +804,8 @@ func _score_key() -> String:
 			return "osu"
 		"spheres":
 			return "spheres"
+		"tracking":
+			return "tracking"
 		_:
 			return "color"
 
@@ -753,6 +818,8 @@ func _summary_visible() -> bool:
 			return osu_state.stage == OsuState.Stage.SUMMARY
 		"spheres":
 			return sphere_state.stage == SphereState.Stage.SUMMARY
+		"tracking":
+			return tracking_state.stage == TrackingState.Stage.SUMMARY
 		_:
 			return false
 
@@ -790,84 +857,65 @@ func _build_menu() -> void:
 	_add_full_rect(menu, DARK)
 	var title := _label("NEKO / BENCHMARK", 34, INK)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	title.position = Vector2(40, 36)
-	title.size = Vector2(560, 44)
+	title.position = Vector2(40, 32)
+	title.size = Vector2(560, 48)
 	menu.add_child(title)
-	var subtitle := _label("SELECT A TEST", 18, MUTED)
+	var subtitle := _label("TESTS / FIND YOUR RHYTHM", 15, MUTED)
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	subtitle.position = Vector2(40, 84)
+	subtitle.position = Vector2(40, 90)
 	subtitle.size = Vector2(560, 26)
 	menu.add_child(subtitle)
-	var projects := [
-		{"id": "color", "name": "COLOR REACTION"},
-		{"id": "corner", "name": "CORNER WATCH"},
-		{"id": "osu", "name": "OSU"},
-		{"id": "spheres", "name": "SPHERE AIM"},
-	]
-	menu_buttons.clear()
-	for index in projects.size():
-		var button := Button.new()
-		button.position = Vector2(40, 120 + index * 88)
-		button.size = Vector2(560, 76)
-		button.text = projects[index].name
+	for index in ScoreStore.PROJECTS.size():
+		var mode: Dictionary = ScoreStore.PROJECTS[index]
+		var button := _button(menu, mode.name, Vector2(40, 128 + index * 76), Vector2(560, 62), enter_project.bind(mode.page))
 		button.add_theme_font_size_override("font_size", 20)
-		button.pressed.connect(enter_project.bind(projects[index].id))
-		menu.add_child(button)
+		button.add_theme_color_override("font_color", ACCENT)
 		menu_buttons.append(button)
-	sens_menu_button = Button.new()
-	sens_menu_button.position = Vector2(40, 472)
-	sens_menu_button.size = Vector2(560, 76)
-	sens_menu_button.text = "3D LOOK SENSITIVITY"
-	sens_menu_button.add_theme_font_size_override("font_size", 20)
-	sens_menu_button.pressed.connect(enter_sens_lab)
-	menu.add_child(sens_menu_button)
-	var footer := _label("Choose a test with the mouse.  ESC: QUIT", 15, MUTED)
+	var separator := ColorRect.new()
+	separator.position = Vector2(40, 530)
+	separator.size = Vector2(560, 1)
+	separator.color = Palette.BORDER
+	menu.add_child(separator)
+	var tools := _label("TOOLS", 13, MUTED)
+	tools.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	tools.position = Vector2(40, 548)
+	tools.size = Vector2(560, 24)
+	menu.add_child(tools)
+	_button(menu, "History", Vector2(40, 584), Vector2(270, 46), show_history)
+	_button(menu, "Settings", Vector2(330, 584), Vector2(270, 46), show_settings)
+	var footer := _label("ESC: QUIT  /  ENGINE TIMING", 13, MUTED)
 	footer.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	footer.position = Vector2(40, 680)
-	footer.size = Vector2(560, 28)
+	footer.position = Vector2(40, 674)
+	footer.size = Vector2(560, 26)
 	menu.add_child(footer)
 	_build_profile_card()
 
 
 func _build_profile_card() -> void:
 	var card := Panel.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.0, 0.0, 0.0, 0.45)
-	style.corner_radius_top_left = 12
-	style.corner_radius_top_right = 12
-	style.corner_radius_bottom_left = 12
-	style.corner_radius_bottom_right = 12
-	style.content_margin_left = 20
-	style.content_margin_top = 16
-	style.content_margin_right = 20
-	style.content_margin_bottom = 16
-	card.add_theme_stylebox_override("panel", style)
-	card.position = Vector2(640, 100)
-	card.size = Vector2(600, 548)
+	card.position = Vector2(640, 90)
+	card.size = Vector2(600, 560)
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	menu.add_child(card)
-	var heading := _label("BEST SCORES", 16, MUTED)
+	var heading := _label("PERSONAL BEST / RECENT TREND", 16, MUTED)
 	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	heading.position = Vector2(660, 118)
-	heading.size = Vector2(560, 24)
+	heading.position = Vector2(664, 108)
+	heading.size = Vector2(552, 28)
 	menu.add_child(heading)
-	profile_rows.clear()
-	for index in ScoreStore.PROFILE_AXES.size():
-		var row := _label("", 16, INK)
+	for index in ScoreStore.PROJECTS.size():
+		var row := _label("", 17, INK)
 		row.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-		row.position = Vector2(660, 152 + index * 28)
-		row.size = Vector2(560, 26)
+		row.position = Vector2(664, 150 + index * 90)
+		row.size = Vector2(320, 58)
 		menu.add_child(row)
 		profile_rows.append(row)
-	profile_radar = ProfileRadar.new()
-	profile_radar.position = Vector2(700, 280)
-	profile_radar.size = Vector2(480, 300)
-	profile_radar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	menu.add_child(profile_radar)
-	profile_hint = _label("", 13, MUTED)
-	profile_hint.position = Vector2(640, 600)
-	profile_hint.size = Vector2(600, 24)
-	menu.add_child(profile_hint)
+		var chart := TrendChart.new()
+		chart.compact = true
+		chart.position = Vector2(990, 156 + index * 90)
+		chart.size = Vector2(226, 52)
+		chart.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		menu.add_child(chart)
+		profile_charts.append(chart)
 
 
 func _build_color_page() -> void:
@@ -885,10 +933,10 @@ func _build_color_page() -> void:
 	color_dots.position = Vector2(0, 405)
 	color_dots.size = Vector2(1280, 36)
 	color_reaction.add_child(color_dots)
-	var footer := _label("ESC: MENU", 15, MUTED)
-	footer.position = Vector2(0, 650)
-	footer.size = Vector2(1280, 26)
-	color_reaction.add_child(footer)
+	color_footer = _label("ESC: MENU", 15, MUTED)
+	color_footer.position = Vector2(0, 650)
+	color_footer.size = Vector2(1280, 26)
+	color_reaction.add_child(color_footer)
 
 
 func _build_osu_page() -> void:
@@ -947,13 +995,14 @@ func _build_hud() -> void:
 
 func _build_sens_slider() -> void:
 	sens_slider_layer = Control.new()
+	sens_slider_layer.theme = Palette.create()
 	sens_slider_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	sens_slider_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	sens_slider_layer.hide()
 	$CanvasLayer.add_child(sens_slider_layer)
 	sens_slider_panel = Panel.new()
 	sens_slider_panel_style = StyleBoxFlat.new()
-	sens_slider_panel_style.bg_color = Color(0.0, 0.0, 0.0, SENS_PANEL_ALPHA_DIM)
+	sens_slider_panel_style.bg_color = Color(Palette.SURFACE, SENS_PANEL_ALPHA_DIM)
 	sens_slider_panel_style.corner_radius_top_left = 12
 	sens_slider_panel_style.corner_radius_top_right = 12
 	sens_slider_panel_style.corner_radius_bottom_left = 12
@@ -985,11 +1034,33 @@ func _build_sens_slider() -> void:
 func _build_summary() -> void:
 	summary.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_add_full_rect(summary, DARK)
-	summary_text = _label("", 20, INK)
-	summary_text.position = Vector2(0, 135)
-	summary_text.size = Vector2(1280, 440)
+	summary_text = _label("", 22, INK)
+	summary_text.position = Vector2(270, 90)
+	summary_text.size = Vector2(940, 310)
 	summary_text.add_theme_constant_override("line_spacing", 10)
 	summary.add_child(summary_text)
+	summary_time = _label("", 14, MUTED)
+	summary_time.position = Vector2(340, 408)
+	summary_time.size = Vector2(800, 30)
+	summary.add_child(summary_time)
+	summary_tag = LineEdit.new()
+	summary_tag.placeholder_text = "Tag (optional): device, setup, or form"
+	summary_tag.max_length = 64
+	summary_tag.position = Vector2(440, 460)
+	summary_tag.size = Vector2(600, 46)
+	summary.add_child(summary_tag)
+	save_status = _label("", 14, MUTED)
+	save_status.position = Vector2(300, 518)
+	save_status.size = Vector2(880, 30)
+	summary.add_child(save_status)
+	save_button = _button(summary, "Save Result", Vector2(440, 568), Vector2(240, 48), _save_result)
+	save_button.add_theme_color_override("font_color", ACCENT)
+	_button(summary, "Retry", Vector2(700, 568), Vector2(160, 48), _restart_project)
+	_button(summary, "Menu", Vector2(880, 568), Vector2(160, 48), show_menu)
+	var footer := _label("R: RETRY    ESC: MENU", 14, MUTED)
+	footer.position = Vector2(340, 656)
+	footer.size = Vector2(800, 30)
+	summary.add_child(footer)
 
 
 func _update_trial_list_opacity() -> void:
@@ -1003,7 +1074,7 @@ func _update_trial_list_opacity() -> void:
 func _build_trial_list() -> void:
 	var background := Panel.new()
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.0, 0.0, 0.0, 0.55)
+	style.bg_color = Color(Palette.SURFACE, 0.90)
 	style.corner_radius_top_left = 12
 	style.corner_radius_top_right = 12
 	style.corner_radius_bottom_left = 12
@@ -1271,7 +1342,12 @@ func _reset_trial_list() -> void:
 func _show_score_flight(index: int, reaction_us: int) -> void:
 	if live_timer:
 		live_timer.hide()
-	var score_text := "%.1f ms" % (float(reaction_us) / 1000.0)
+	if _active_samples().size() == 5:
+		_freeze_result()
+	_show_score_text_flight(index, "%.1f ms" % (float(reaction_us) / 1000.0))
+
+
+func _show_score_text_flight(index: int, score_text: String) -> void:
 	if score_flight:
 		score_flight.kill()
 	score_flight_active = true
@@ -1290,27 +1366,14 @@ func _finish_score_flight(index: int, score_text: String) -> void:
 
 
 func _update_best_scores() -> void:
-	for index in menu_buttons.size():
-		menu_buttons[index].text = ScoreStore.PROFILE_AXES[index].name
-	if sens_menu_button:
-		sens_menu_button.text = "3D LOOK SENSITIVITY\nCURRENT: %.2f" % scores.look_sens
-	var complete := true
-	for index in ScoreStore.PROFILE_AXES.size():
-		var axis: Dictionary = ScoreStore.PROFILE_AXES[index]
-		var best := scores.get_best(axis.key)
-		var value := "--" if best == 0.0 else "%.1f ms" % best
-		if best == 0.0:
-			complete = false
-		if index < profile_rows.size():
-			profile_rows[index].text = "%s    %s" % [axis.label, value]
-	if profile_radar:
-		profile_radar.set_radii(scores.profile_radii())
-	if profile_hint:
-		profile_hint.text = (
-			"ENGINE TIMING · NOT PHOTON"
-			if complete
-			else "COMPLETE ALL 4 TO FILL THE RADAR"
-		)
+	for index in ScoreStore.PROJECTS.size():
+		var mode: Dictionary = ScoreStore.PROJECTS[index]
+		var best := scores.get_best(mode.key)
+		var missing: bool = best < 0.0 if mode.key == "tracking" else best == 0.0
+		var value := "--" if missing else "%.1f %s" % [best, "%" if mode.key == "tracking" else "ms"]
+		profile_rows[index].text = "%s\n%s  /  %s" % [mode.name, value, "HIGHER IS BETTER" if mode.key == "tracking" else "LOWER IS BETTER"]
+		var records: Array[Dictionary] = history.filtered(mode.key)
+		profile_charts[index].set_records(records.slice(maxi(0, records.size() - 20)), mode.key == "tracking")
 
 
 func _label(text: String, font_size: int, color: Color) -> Label:
@@ -1323,6 +1386,92 @@ func _label(text: String, font_size: int, color: Color) -> Label:
 	label.add_theme_font_size_override("font_size", font_size)
 	label.add_theme_color_override("font_color", color)
 	return label
+
+
+func _button(parent: Control, text: String, pos: Vector2, extent: Vector2, action: Callable) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.position = pos
+	button.size = extent
+	button.pressed.connect(action)
+	parent.add_child(button)
+	return button
+
+
+func _build_settings() -> void:
+	settings_page = Control.new()
+	settings_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	settings_page.theme = Palette.create()
+	add_child(settings_page)
+	_add_full_rect(settings_page, DARK)
+	var title := _label("SETTINGS", 34, INK)
+	title.position = Vector2(40, 32)
+	title.size = Vector2(1200, 48)
+	settings_page.add_child(title)
+	settings_value = _label("", 22, INK)
+	settings_value.position = Vector2(240, 220)
+	settings_value.size = Vector2(800, 44)
+	settings_page.add_child(settings_value)
+	settings_slider = HSlider.new()
+	settings_slider.min_value = Camera3DConfig.LOOK_SENS_MIN
+	settings_slider.max_value = Camera3DConfig.LOOK_SENS_MAX
+	settings_slider.step = Camera3DConfig.LOOK_SENS_FINE_STEP
+	settings_slider.position = Vector2(330, 300)
+	settings_slider.size = Vector2(620, 36)
+	settings_slider.value_changed.connect(func(value: float) -> void: _set_look_sensitivity(value))
+	settings_page.add_child(settings_slider)
+	var hint := _label("Shared by all 3D tests. Practice and adjust in Sens Lab.", 16, MUTED)
+	hint.position = Vector2(160, 360)
+	hint.size = Vector2(960, 40)
+	settings_page.add_child(hint)
+	_button(settings_page, "Open Sens Lab", Vector2(440, 440), Vector2(400, 54), enter_sens_lab)
+	_button(settings_page, "Menu", Vector2(520, 580), Vector2(240, 48), show_menu)
+
+
+func show_settings() -> void:
+	show_menu()
+	page = "settings"
+	menu.hide()
+	settings_page.show()
+	settings_slider.set_value_no_signal(scores.look_sens)
+	settings_value.text = "LOOK SENSITIVITY  %.2f" % scores.look_sens
+
+
+func show_history() -> void:
+	show_menu()
+	page = "history"
+	menu.hide()
+	history_page.show()
+	history_page.refresh(true)
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT and page == "tracking" and tracking_state.stage in [TrackingState.Stage.PREPARING, TrackingState.Stage.ACTIVE]:
+		tracking_state.reset()
+		tracking_state.stage = TrackingState.Stage.INVALID
+		_reset_trial_list()
+		_refresh_tracking()
+
+
+func _refresh_tracking() -> void:
+	hud_title.text = "3D TRACKING"
+	hud_dots.text = _dots(tracking_state.coverage.size())
+	hud_footer.text = "MOUSE: TRACK WITH CROSSHAIR | NO FIRE REQUIRED | ESC: MENU"
+	var now := Time.get_ticks_usec()
+	live_timer.hide()
+	match tracking_state.stage:
+		TrackingState.Stage.READY:
+			hud_hint.text = "Press a react key or click to begin five 10-second rounds."
+		TrackingState.Stage.INVALID:
+			hud_hint.text = "Focus lost. Set cancelled. Press or click to retry."
+		TrackingState.Stage.PREPARING:
+			hud_hint.text = "PREPARE  %.1f s / Aim at the stationary sphere" % (maxi(0, tracking_state.deadline_us - now) / 1_000_000.0)
+		TrackingState.Stage.ACTIVE:
+			var elapsed: int = maxi(1, tracking_state.last_us - tracking_state.start_us)
+			var coverage: float = 100.0 * tracking_state.covered_us / elapsed
+			hud_hint.text = "TRACK  %.1f s remaining / %.1f %% covered" % [maxf(0.0, 10.0 - elapsed / 1_000_000.0), coverage]
+			live_timer.text = "LIVE  %.1f s / %.1f %%" % [maxf(0.0, 10.0 - elapsed / 1_000_000.0), coverage]
+			live_timer.show()
 
 
 func _add_full_rect(parent: Control, color: Color) -> ColorRect:
