@@ -1,6 +1,8 @@
 class_name SensLab
 extends Node3D
 
+const Palette = preload("res://scripts/app_theme.gd")
+
 const Camera3DConfig = preload("res://scripts/camera_3d_config.gd")
 const PracticeRoom = preload("res://scripts/practice_room.gd")
 
@@ -102,7 +104,7 @@ func spawn_targets() -> void:
 	clear_targets()
 	square_half = clampf(square_half, min_square_half(), max_square_half())
 	for index in TARGET_COUNT:
-		var body := _make_sphere(_square_offset(index), Color(0.74, 0.2 + index * 0.08, 0.16, 1.0))
+		var body := _make_sphere(_square_offset(index), Palette.PRIMARY.lerp(Palette.SECONDARY, float(index) / 3.0))
 		targets_root.add_child(body)
 		target_bodies.append(body)
 		alive.append(true)
@@ -111,7 +113,7 @@ func spawn_targets() -> void:
 func spawn_gate() -> void:
 	clear_targets()
 	gate_active = true
-	var body := _make_sphere(Vector3(0.0, square_center_y(), TARGET_Z), Color(0.22, 0.82, 0.38, 1.0))
+	var body := _make_sphere(Vector3(0.0, square_center_y(), TARGET_Z), Palette.SUCCESS)
 	targets_root.add_child(body)
 	target_bodies.append(body)
 	alive.append(true)

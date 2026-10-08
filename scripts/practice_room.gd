@@ -1,5 +1,7 @@
 extends RefCounted
 
+const Palette = preload("res://scripts/app_theme.gd")
+
 # Shared practice room for all 3D modes.
 const FLOOR_TOP := 0.0
 const CEILING_Y := 8.0
@@ -25,8 +27,8 @@ static func contains_point(point: Vector3, margin: float = 0.0) -> bool:
 static func grid_material() -> ShaderMaterial:
 	var mat := ShaderMaterial.new()
 	mat.shader = load("res://shaders/practice_grid.gdshader")
-	mat.set_shader_parameter("base_color", Color(0.62, 0.63, 0.65))
-	mat.set_shader_parameter("line_color", Color(0.50, 0.51, 0.54))
+	mat.set_shader_parameter("base_color", Palette.BASE.lightened(0.12))
+	mat.set_shader_parameter("line_color", Palette.BASE.lightened(0.20))
 	mat.set_shader_parameter("tile_size", TILE_SIZE)
 	mat.set_shader_parameter("line_width", 0.045)
 	mat.set_shader_parameter("fade_start", 10.0)
@@ -61,13 +63,13 @@ static func build(parent: Node3D) -> void:
 		var env_node := WorldEnvironment.new()
 		var env := Environment.new()
 		env.background_mode = Environment.BG_COLOR
-		env.background_color = Color(0.45, 0.46, 0.48)
+		env.background_color = Palette.BASE
 		env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-		env.ambient_light_color = Color(0.72, 0.73, 0.75)
+		env.ambient_light_color = Palette.INK
 		env.ambient_light_energy = 0.7
 		env.tonemap_mode = Environment.TONE_MAPPER_ACES
 		env.fog_enabled = true
-		env.fog_light_color = Color(0.58, 0.59, 0.61)
+		env.fog_light_color = Palette.BASE.lightened(0.12)
 		env.fog_density = 0.012
 		env.fog_aerial_perspective = 0.35
 		env_node.environment = env

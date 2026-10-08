@@ -12,6 +12,9 @@ func _initialize() -> void:
 func _run() -> void:
 	var packed: PackedScene = load("res://scenes/Main.tscn")
 	var app: Node = packed.instantiate()
+	var test_prefix := "user://playthrough-%d" % Time.get_ticks_usec()
+	app.get("scores").score_path = test_prefix + "-scores.txt"
+	app.get("history").path = test_prefix + "-history.json"
 	get_root().add_child(app)
 	await process_frame
 	await process_frame
@@ -130,11 +133,90 @@ func _run() -> void:
 
 	app.call("show_menu")
 	await process_frame
-	assert(app.get("profile_radar") != null, "menu should show profile radar")
-	assert(app.get("profile_rows").size() == 4, "profile should list four bests")
-	const ScoreStore = preload("res://scripts/score_store.gd")
-	assert(is_equal_approx(ScoreStore.radar_radius(260.0, 120.0, 400.0), 0.5))
-	assert(ScoreStore.radar_radius(0.0, 120.0, 400.0) < 0.0)
+	assert(app.get("profile_rows").size() == 5, "overview should list five bests")
+	assert(app.get("profile_charts").size() == 5, "overview should have five trends")
+	assert(app.get("menu_buttons").size() == 5)
+	app.call("show_settings")
+	assert(app.get("settings_page").visible)
+	assert(not app.get("menu").visible)
+	app.call("show_history")
+	assert(app.get("history_page").visible)
+	assert(not app.get("settings_page").visible)
+
+	app.call("enter_project", "tracking")
+	assert(app.get("tracking").active)
+	var tracking_state = app.get("tracking_state")
+	const TrackingState = preload("res://scripts/tracking_state.gd")
+	tracking_state.coverage.assign([20.0, 40.0, 60.0, 80.0, 100.0])
+	tracking_state.errors.assign([5.0, 4.0, 3.0, 2.0, 1.0])
+	tracking_state.stage = TrackingState.Stage.SUMMARY
+	app.call("complete_summary")
+	assert(app.get("summary").visible)
+	assert(Input.mouse_mode == Input.MOUSE_MODE_VISIBLE)
+	assert(not app.get("tracking").active)
+	assert(app.get("result_snapshot").samples == [20.0, 40.0, 60.0, 80.0, 100.0])
+	app.get("summary_tag").text = "mouse-A"
+	app.get("summary_tag").grab_focus()
+	var retry := InputEventKey.new()
+	retry.keycode = KEY_R
+	retry.pressed = true
+	app.call("_unhandled_input", retry)
+	assert(app.get("summary").visible, "typing R in the tag must not restart")
+	app.call("_save_result")
+	assert(app.get("save_button").disabled)
+	assert(app.get("history").records.size() == 1)
+	app.call("_save_result")
+	assert(app.get("history").records.size() == 1, "duplicate save must not append")
+	app.call("show_history")
+	var history_page = app.get("history_page")
+	history_page.project_select.select(4)
+	history_page.refresh(true)
+	assert(history_page.shown.size() == 1)
+	assert(history_page.shown[0].tag == "mouse-A")
+	history_page.call("_show_record", history_page.shown[0])
+	assert("60.0 %" in history_page.detail.text)
+	for index in 55:
+		var record: Dictionary = app.get("history").records[0].duplicate(true)
+		record.id += "-%d" % index
+		record.timestamp_utc += index + 1
+		record.tag = "mouse-B" if index % 2 == 0 else "mouse-A"
+		app.get("history").records.append(record)
+	history_page.refresh(true)
+	assert(history_page.shown.size() == 50)
+	assert(not history_page.next.disabled)
+	history_page.next.pressed.emit()
+	assert(history_page.shown.size() == 6)
+	assert(history_page.next.disabled)
+	history_page.previous.pressed.emit()
+	assert(history_page.shown.size() == 50)
+	history_page.tag_select.select(2)
+	history_page.refresh()
+	assert(history_page.filtered.size() == 28)
+	assert(history_page.shown[0].tag == "mouse-B")
+	app.call("enter_project", "tracking")
+	tracking_state.prepare(Time.get_ticks_usec())
+	app.call("_notification", Node.NOTIFICATION_APPLICATION_FOCUS_OUT)
+	assert(tracking_state.stage == TrackingState.Stage.INVALID)
+	assert(tracking_state.coverage.is_empty())
+	assert(app.get("result_snapshot").is_empty())
+
+	app.call("enter_project", "corner")
+	app.get("state").reactions_us.assign([100000, 200000, 300000, 400000, 500000])
+	app.get("state").stage = 5
+	app.call("complete_summary")
+	assert(not app.get("corner_watch").active)
+	assert(Input.mouse_mode == Input.MOUSE_MODE_VISIBLE)
+	app.call("_restart_project")
+	assert(app.get("corner_watch").active)
+	if DisplayServer.get_name() != "headless":
+		assert(Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
+	app.call("show_menu")
+	app.call("enter_project", "color")
+	app.call("complete_summary")
+	assert(not app.get("summary").visible, "incomplete sets must not show a saveable result")
+	app.call("show_menu")
+	DirAccess.remove_absolute(test_prefix + "-scores.txt")
+	DirAccess.remove_absolute(test_prefix + "-history.json")
 	print("playthrough_test: PASS")
 	quit()
 

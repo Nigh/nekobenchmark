@@ -1,6 +1,8 @@
 class_name SphereAim
 extends Node3D
 
+const Palette = preload("res://scripts/app_theme.gd")
+
 const Camera3DConfig = preload("res://scripts/camera_3d_config.gd")
 const PracticeRoom = preload("res://scripts/practice_room.gd")
 
@@ -17,7 +19,7 @@ const SPREAD_FOV_DEG := 60.0
 const DEPTH_MIN := 8.0
 const DEPTH_MAX := 16.0
 const GATE_Z := -8.0 # same fixed depth as SensLab TARGET_Z
-const GATE_COLOR := Color(0.22, 0.82, 0.38, 1.0)
+const GATE_COLOR := Palette.SUCCESS
 
 var active := false
 var gate_active := false
@@ -113,7 +115,7 @@ func spawn_targets() -> void:
 		if not added:
 			positions.append(_fallback_quad_pos(positions.size(), half))
 	for index in positions.size():
-		var color := Color(0.74, 0.2 + index * 0.05, 0.16, 1.0)
+		var color := Palette.PRIMARY.lerp(Palette.SECONDARY, float(index) / 5.0)
 		var body := _make_sphere(positions[index], color)
 		targets_root.add_child(body)
 		target_bodies.append(body)
@@ -220,7 +222,7 @@ func _make_sphere(position: Vector3, color: Color) -> StaticBody3D:
 
 
 func _input(event: InputEvent) -> void:
-	if active and event is InputEventMouseMotion:
+	if active and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and event is InputEventMouseMotion:
 		var sens := Camera3DConfig.look_radians_per_pixel(look_sensitivity)
 		yaw = clampf(yaw - event.relative.x * sens, YAW_MIN, YAW_MAX)
 		pitch -= event.relative.y * sens

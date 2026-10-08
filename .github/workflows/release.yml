@@ -43,8 +43,13 @@ jobs:
         with:
           godot-version: 4.4.1
           include-export-templates: true
-      - name: Run state-machine tests
-        run: godot --headless --path . --script tests/reaction_state_test.gd
+      - name: Import and verify project
+        run: |
+          godot --headless --path . --editor --quit
+          godot --headless --path . --script tests/reaction_state_test.gd
+          godot --headless --path . --script tests/sequence_state_test.gd
+          godot --headless --path . --script tests/playthrough_test.gd
+          godot --headless --path . --script tests/history_tracking_test.gd
       - name: Export project
         run: godot --headless --path . --export-release "${{ matrix.preset }}"
       - name: Package export
@@ -53,6 +58,7 @@ jobs:
           mkdir -p package
           cp "dist/${{ matrix.binary }}" package/
           cp assets/MapleMono-OFL.txt package/
+          cp assets/licenses/xianii-theme-LICENSE.txt package/
           (cd package && zip -r "../dist/${{ matrix.asset }}" .)
       - uses: actions/upload-artifact@v7
         with:
