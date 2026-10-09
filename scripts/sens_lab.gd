@@ -14,7 +14,10 @@ const YAW_MAX := PI * 0.5
 const TARGET_COUNT := 4
 const SPHERE_RADIUS := 0.42 # 1.2× prior 0.35
 const HIT_RADIUS_SCALE := 1.1
-const TARGET_Z := -8.0
+const DISTANCE_DEFAULT := 8.0
+const DISTANCE_MIN := 3.0
+const DISTANCE_MAX := 20.0
+const DISTANCE_STEP := 0.25
 const SPACING_STEP := 0.08
 const FOV_LIMIT_DEG := 90.0
 
@@ -24,6 +27,7 @@ var look_sensitivity := Camera3DConfig.LOOK_SENS_DEFAULT
 var yaw := 0.0
 var pitch := -0.05
 var square_half := 1.5
+var target_distance := DISTANCE_DEFAULT
 var target_bodies: Array[StaticBody3D] = []
 var alive: Array[bool] = []
 var gate_active := false
@@ -67,12 +71,20 @@ func min_square_half() -> float:
 
 
 func max_square_half() -> float:
-	var depth := absf(TARGET_Z - camera.position.z)
+	return max_square_half_at(target_distance, camera.position.y)
+
+
+static func max_square_half_at(distance: float, camera_height: float = 1.4) -> float:
 	var half_fov := deg_to_rad(FOV_LIMIT_DEG * 0.5)
-	var by_fov := (depth * tan(half_fov)) / sqrt(2.0)
+	var limit := distance * tan(half_fov) - SPHERE_RADIUS
+	var by_fov := limit / sqrt(2.0)
+	var lift_threshold := camera_height - PracticeRoom.FLOOR_TOP - SPHERE_RADIUS
+	if by_fov > lift_threshold:
+		# Top corners move twice as far upward once the square lifts off the floor.
+		by_fov = (2.0 * lift_threshold + sqrt(5.0 * limit * limit - lift_threshold * lift_threshold)) / 5.0
 	# Raise the square instead of capping by the floor; ceiling still limits size.
 	var by_ceiling := (PracticeRoom.CEILING_Y - PracticeRoom.FLOOR_TOP - SPHERE_RADIUS * 2.0) * 0.5
-	return maxf(min_square_half(), minf(by_fov, by_ceiling))
+	return maxf(SPHERE_RADIUS, minf(by_fov, by_ceiling))
 
 
 func square_center_y() -> float:
@@ -81,15 +93,17 @@ func square_center_y() -> float:
 	return maxf(camera.position.y, min_center)
 
 
-func nudge_spacing(delta: float) -> float:
-	square_half = clampf(square_half + delta, min_square_half(), max_square_half())
-	if not gate_active and target_bodies.size() == TARGET_COUNT:
-		_reposition_square()
-	return square_half * 2.0
-
-
 func spacing_side() -> float:
 	return square_half * 2.0
+
+
+func set_layout(spacing: float, distance: float) -> void:
+	target_distance = clampf(distance, DISTANCE_MIN, DISTANCE_MAX)
+	square_half = clampf(spacing * 0.5, min_square_half(), max_square_half())
+	if gate_active and not target_bodies.is_empty():
+		target_bodies[0].position = Vector3(0.0, square_center_y(), -target_distance)
+	elif target_bodies.size() == TARGET_COUNT:
+		_reposition_square()
 
 
 func clear_targets() -> void:
@@ -113,7 +127,7 @@ func spawn_targets() -> void:
 func spawn_gate() -> void:
 	clear_targets()
 	gate_active = true
-	var body := _make_sphere(Vector3(0.0, square_center_y(), TARGET_Z), Palette.SUCCESS)
+	var body := _make_sphere(Vector3(0.0, square_center_y(), -target_distance), Palette.SUCCESS)
 	targets_root.add_child(body)
 	target_bodies.append(body)
 	alive.append(true)
@@ -163,7 +177,7 @@ func _square_offset(index: int) -> Vector3:
 	var cy := square_center_y()
 	var sx := -square_half if index % 2 == 0 else square_half
 	var sy := square_half if index < 2 else -square_half
-	return Vector3(sx, cy + sy, TARGET_Z)
+	return Vector3(sx, cy + sy, -target_distance)
 
 
 func _reposition_square() -> void:

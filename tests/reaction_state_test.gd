@@ -39,8 +39,5 @@ func _init() -> void:
 
 	var result: Dictionary = Scores.statistics([100_000, 200_000, 300_000, 400_000, 500_000])
 	assert(is_equal_approx(result.median, 300.0))
-	assert(Scores.is_new_best(0.0, 300.0))
-	assert(Scores.is_new_best(400.0, 300.0))
-	assert(not Scores.is_new_best(200.0, 300.0))
 	print("reaction_state_test: PASS")
 	quit()

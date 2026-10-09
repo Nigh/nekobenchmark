@@ -18,7 +18,7 @@ const MIN_SEPARATION := SPHERE_RADIUS * 2.0 + 0.45
 const SPREAD_FOV_DEG := 60.0
 const DEPTH_MIN := 8.0
 const DEPTH_MAX := 16.0
-const GATE_Z := -8.0 # same fixed depth as SensLab TARGET_Z
+const GATE_Z := -8.0 # Same as Sens Lab's default distance.
 const GATE_COLOR := Palette.SUCCESS
 
 var active := false
