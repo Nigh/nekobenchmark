@@ -2,6 +2,7 @@ extends Node
 
 var streams := {}
 var player: AudioStreamPlayer
+var tracking_player: AudioStreamPlayer
 var last_hover_us := -100_000
 var last_slide_us := -100_000
 var last_kind := ""
@@ -22,14 +23,31 @@ func _ready() -> void:
 	start_data.append_array(_tone(1100.0, 0.045).data)
 	streams.start.data = start_data
 
+	tracking_player = AudioStreamPlayer.new()
+	tracking_player.volume_db = -28.0
+	var loop := _tone(440.0, 0.1, false)
+	loop.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	loop.loop_end = loop.data.size() / 2
+	tracking_player.stream = loop
+	add_child(tracking_player)
 
-static func _tone(frequency: float, seconds: float) -> AudioStreamWAV:
+
+func set_tracking_weight(weight: float) -> void:
+	if weight <= 0.0:
+		tracking_player.stop()
+		return
+	tracking_player.pitch_scale = 2.0 if weight == 1.0 else 1.0
+	if not tracking_player.playing:
+		tracking_player.play()
+
+
+static func _tone(frequency: float, seconds: float, fade: bool = true) -> AudioStreamWAV:
 	var samples := int(44100 * seconds)
 	var data := PackedByteArray()
 	data.resize(samples * 2)
 	for index in samples:
 		var t := float(index) / 44100.0
-		var envelope := sin(PI * float(index) / float(samples - 1))
+		var envelope := sin(PI * float(index) / float(samples - 1)) if fade else 1.0
 		data.encode_s16(index * 2, int(16000.0 * envelope * sin(TAU * frequency * t)))
 	var stream := AudioStreamWAV.new()
 	stream.format = AudioStreamWAV.FORMAT_16_BITS

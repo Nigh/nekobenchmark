@@ -81,6 +81,10 @@ var sens_chrome_full := false
 var sens_last_adjust_sec := -INF
 var profile_rows: Array[Label] = []
 var profile_titles: Array[Label] = []
+var profile_raw: Array[Label] = []
+var profile_status: Array[Label] = []
+var profile_total: Label
+var profile_total_status: Label
 var menu_radar: Control
 var result_cache = ResultCache.new()
 var last_menu_refresh_us := -1_000_000
@@ -188,16 +192,17 @@ func _process(_delta: float) -> void:
 	elif page == "tracking":
 		var preparing: bool = tracking_state.stage == TrackingState.Stage.PREPARING
 		var acquired_before: int = tracking_state.acquired_us
-		tracking.move_target(tracking_state.coverage.size(), tracking_state.movement_seconds(now))
+		tracking.move_target(tracking_state.path_index(), tracking_state.movement_seconds(now))
 		if tracking_state.advance(now, tracking.score_weight(), tracking.error_degrees()):
 			var index: int = tracking_state.coverage.size() - 1
 			_show_score_text_flight(index, ScoreStore.display("tracking", tracking_state.coverage[index]))
 			if tracking_state.stage == TrackingState.Stage.PREPARING:
-				tracking.move_target(tracking_state.coverage.size(), 0.0)
+				tracking.move_target(tracking_state.path_index(), 0.0)
 		if preparing and tracking_state.stage == TrackingState.Stage.ACTIVE:
 			audio.play("start")
 		elif preparing and tracking_state.acquired_us > acquired_before:
 			audio.play("slide")
+		audio.set_tracking_weight(tracking.score_weight() if tracking_state.stage == TrackingState.Stage.ACTIVE else 0.0)
 		tracking.set_feedback(tracking_state.stage == TrackingState.Stage.ACTIVE, tracking_state.acquired_us / 1_000_000.0)
 		_refresh_tracking()
 		if tracking_state.stage == TrackingState.Stage.SUMMARY:
@@ -271,6 +276,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func show_menu() -> void:
+	audio.set_tracking_weight(0.0)
 	page = ""
 	result_snapshot.clear()
 	tracking_state.reset()
@@ -299,6 +305,7 @@ func show_menu() -> void:
 
 
 func enter_project(project: String) -> void:
+	audio.set_tracking_weight(0.0)
 	if project == "sens":
 		enter_sens_lab()
 		return
@@ -335,6 +342,7 @@ func enter_project(project: String) -> void:
 
 
 func enter_sens_lab() -> void:
+	audio.set_tracking_weight(0.0)
 	page = "sens"
 	result_snapshot.clear()
 	tracking.set_active(false)
@@ -389,6 +397,7 @@ func complete_summary() -> void:
 	$CanvasLayer/HUD.hide()
 	corner_watch.active = false
 	sphere_aim.active = false
+	audio.set_tracking_weight(0.0)
 	tracking.active = false
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	summary.show()
@@ -978,7 +987,7 @@ func _build_profile_card() -> void:
 	card.size = Vector2(600, 560)
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	menu.add_child(card)
-	var heading := _label("LATEST RESULTS / 1-HOUR SAVE WINDOW", 16, MUTED)
+	var heading := _label("LATEST RESULTS", 18, MUTED)
 	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	heading.position = Vector2(664, 108)
 	heading.size = Vector2(552, 28)
@@ -986,7 +995,7 @@ func _build_profile_card() -> void:
 	for index in ScoreStore.PROJECTS.size():
 		var mode: Dictionary = ScoreStore.PROJECTS[index]
 		var title := _label(mode.name, 16, Palette.BASE)
-		title.position = Vector2(664, 150 + index * 72)
+		title.position = Vector2(664, 150 + index * 76)
 		title.size = Vector2(210, 26)
 		var fill := StyleBoxFlat.new()
 		fill.bg_color = Palette.PROJECT_COLORS[mode.key]
@@ -996,13 +1005,33 @@ func _build_profile_card() -> void:
 		bold.variation_embolden = 0.7
 		title.add_theme_font_override("font", bold)
 		menu.add_child(title)
-		var row := _label("", 13, INK)
+		var row := _label("", 23, INK)
 		row.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-		row.position = Vector2(664, 178 + index * 72)
-		row.size = Vector2(300, 30)
+		row.position = Vector2(664, 178 + index * 76)
+		row.size = Vector2(138, 28)
 		menu.add_child(row)
+		var raw := _label("", 14, MUTED)
+		raw.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		raw.position = Vector2(802, 180 + index * 76)
+		raw.size = Vector2(126, 26)
+		menu.add_child(raw)
+		var status := _label("", 12, MUTED)
+		status.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		status.position = Vector2(664, 207 + index * 76)
+		status.size = Vector2(264, 20)
+		menu.add_child(status)
 		profile_rows.append(row)
+		profile_raw.append(raw)
+		profile_status.append(status)
 		profile_titles.append(title)
+	profile_total = _label("-- / 500", 26, INK)
+	profile_total.position = Vector2(952, 144)
+	profile_total.size = Vector2(264, 34)
+	menu.add_child(profile_total)
+	profile_total_status = _label("TOTAL / 0 OF 5 RESULTS", 12, MUTED)
+	profile_total_status.position = Vector2(952, 182)
+	profile_total_status.size = Vector2(264, 24)
+	menu.add_child(profile_total_status)
 	menu_radar = Radar.new()
 	menu_radar.position = Vector2(950, 212)
 	menu_radar.size = Vector2(282, 280)
@@ -1492,22 +1521,39 @@ func _update_latest_scores(now_us: int = -1) -> void:
 	var completed := result_cache.selected(now_us).size()
 	menu_radar.set_results(result_cache.displayed())
 	menu_radar.expired_projects.clear()
+	var total := 0.0
+	var expired_count := 0
+	var available := 0
 	for index in ScoreStore.PROJECTS.size():
 		var mode: Dictionary = ScoreStore.PROJECTS[index]
 		var entry: Dictionary = result_cache.latest(mode.key)
 		profile_rows[index].modulate.a = 1.0
 		profile_titles[index].modulate.a = 1.0
+		profile_raw[index].modulate.a = 1.0
+		profile_status[index].modulate.a = 1.0
 		if entry.is_empty():
-			profile_rows[index].text = "-- / NO VALID RESULT"
+			profile_rows[index].text = "-- pts"
+			profile_raw[index].text = "--"
+			profile_status[index].text = "NO VALID RESULT"
 			continue
+		available += 1
+		total += ScoreStore.points(mode.key, entry.record.stats.median)
 		var is_expired := result_cache.expired(entry, now_us)
 		var remaining := maxi(0, ceili(float(ResultCache.VALID_US - (now_us - int(entry.completed_us))) / 1_000_000.0))
 		var status := "EXPIRED" if is_expired else "%02d:%02d LEFT%s" % [remaining / 60, remaining % 60, " / SAVED" if entry.saved else ""]
-		profile_rows[index].text = "%s\n%s" % [ScoreStore.display(mode.key, entry.record.stats.median), status]
+		profile_rows[index].text = "%.1f pts" % ScoreStore.points(mode.key, entry.record.stats.median)
+		profile_raw[index].text = "%.1f %s" % [entry.record.stats.median, "%" if mode.key == "tracking" else "ms"]
+		profile_status[index].text = status
 		if is_expired:
+			expired_count += 1
+			profile_raw[index].modulate.a = 0.4
+			profile_status[index].modulate.a = 0.4
 			profile_rows[index].modulate.a = 0.4
 			profile_titles[index].modulate.a = 0.4
 			menu_radar.expired_projects.append(mode.key)
+	profile_total.text = "%.1f / 500" % total if available == 5 else "-- / 500"
+	profile_total_status.text = "TOTAL / %d OF 5 RESULTS%s" % [available, " / EXPIRED" if expired_count > 0 else ""]
+	profile_total.modulate.a = 0.4 if expired_count > 0 else 1.0
 	save_button.disabled = completed != ScoreStore.PROJECTS.size() or not history.writable
 	menu_tag.editable = history.writable
 	save_status.text = menu_notice if not menu_notice.is_empty() else "%d / 5 ready. Complete all five within one hour to save." % completed
@@ -1589,6 +1635,7 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_APPLICATION_FOCUS_OUT and page == "tracking" and tracking_state.stage in [TrackingState.Stage.PREPARING, TrackingState.Stage.ACTIVE]:
 		tracking_state.reset()
 		tracking_state.stage = TrackingState.Stage.INVALID
+		audio.set_tracking_weight(0.0)
 		_reset_trial_list()
 		_refresh_tracking()
 

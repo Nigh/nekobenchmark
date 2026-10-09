@@ -32,6 +32,16 @@ light_color = Color(0.7, 0.75, 0.85, 1)
 light_energy = 1.2
 omni_range = 24.0
 
+[node name="CeilingSpot" type="SpotLight3D" parent="."]
+position = Vector3(0, 7.8, -7.4)
+rotation_degrees = Vector3(-90, 0, 0)
+light_color = Color(1, 0.94, 0.85, 1)
+light_energy = 2.5
+spot_range = 12.0
+spot_angle = 52.0
+spot_attenuation = 0.6
+shadow_enabled = true
+
 [node name="Camera3D" type="Camera3D" parent="."]
 position = Vector3(0, 1.4, 0)
 current = false

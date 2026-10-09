@@ -24,6 +24,7 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 
+	assert(app.get("profile_total").text == "-- / 500", "incomplete results cannot fabricate a total")
 	assert(float(app.get("OSU_SPACING")) == 360.0, "osu spacing should be 360")
 
 	app.call("enter_project", "osu")
@@ -162,6 +163,18 @@ func _run() -> void:
 	assert(int(sphere_state.get("stage")) == SphereState.Stage.AIMING, "wait should spawn targets")
 	var bodies: Array = sphere_aim.get("target_bodies")
 	assert(bodies.size() == 6, "expected 6 spheres")
+	var sorted_layouts: Array = sphere_aim.layout_order.duplicate()
+	sorted_layouts.sort()
+	assert(sorted_layouts == [0, 1, 2, 3, 4])
+	for round_index in 5:
+		if round_index > 0:
+			sphere_aim.spawn_targets()
+		var layout: Array = sphere_aim.LAYOUTS[sphere_aim.layout_order[round_index]]
+		for index in 6:
+			assert(sphere_aim.target_bodies[index].position == layout[index])
+	assert(sphere_aim.layout_cursor == 5)
+	bodies = sphere_aim.target_bodies
+
 	var PracticeRoom = load("res://scripts/practice_room.gd")
 	var cam: Camera3D = sphere_aim.get("camera")
 	var forward: Vector3 = -cam.global_transform.basis.z
@@ -337,7 +350,7 @@ func _run() -> void:
 	assert(not target_material.get_shader_parameter("scoring"))
 	tracking_state.last_us = Time.get_ticks_usec() - 500_000
 	tracking_state.was_covered = true
-	app.get("tracking").move_target(0, tracking_state.movement_seconds(Time.get_ticks_usec()))
+	app.get("tracking").move_target(tracking_state.path_index(), tracking_state.movement_seconds(Time.get_ticks_usec()))
 	app.get("tracking").camera.look_at(app.get("tracking").target.global_position)
 	audio.last_slide_us = -100_000
 	app.call("_process", 0.0)
@@ -345,7 +358,7 @@ func _run() -> void:
 	tracking_state.motion_start_us = Time.get_ticks_usec() - 1_000_000
 	tracking_state.last_us = Time.get_ticks_usec() - 1_000_000
 	tracking_state.was_covered = true
-	app.get("tracking").move_target(0, tracking_state.movement_seconds(Time.get_ticks_usec()))
+	app.get("tracking").move_target(tracking_state.path_index(), tracking_state.movement_seconds(Time.get_ticks_usec()))
 	app.get("tracking").camera.look_at(app.get("tracking").target.global_position)
 	var play_count: int = app.get("audio").play_count
 	app.call("_process", 0.0)
@@ -355,6 +368,20 @@ func _run() -> void:
 	assert(app.get("audio").last_kind == "start")
 	app.call("_process", 0.0)
 	assert(app.get("audio").play_count == play_count + 1)
+	assert(audio.tracking_player.playing, "active center coverage starts continuous feedback")
+	app.get("tracking").camera.look_at(app.get("tracking").target.global_position + Vector3(0.3, 0, 0))
+	app.call("_process", 0.0)
+	assert(audio.tracking_player.playing and audio.tracking_player.pitch_scale == 1.0, "outer coverage uses lower pitch")
+	app.get("tracking").camera.rotation = Vector3(0, PI, 0)
+	app.call("_process", 0.0)
+	assert(not audio.tracking_player.playing, "outside coverage is silent")
+	assert(target_material.get_shader_parameter("inner_color") == app.get("Palette").WARNING)
+	audio.set_tracking_weight(0.5)
+	assert(audio.tracking_player.playing and audio.tracking_player.pitch_scale == 1.0)
+	audio.set_tracking_weight(1.0)
+	assert(audio.tracking_player.playing and audio.tracking_player.pitch_scale == 2.0)
+	audio.set_tracking_weight(0.0)
+	assert(not audio.tracking_player.playing)
 	tracking_state.coverage.assign([20.0, 40.0, 60.0, 80.0, 100.0])
 	tracking_state.errors.assign([5.0, 4.0, 3.0, 2.0, 1.0])
 	tracking_state.stage = TrackingState.Stage.SUMMARY
@@ -363,6 +390,7 @@ func _run() -> void:
 	assert(is_equal_approx(app.get("summary_radar").values.tracking, Scores.points("tracking", 60.0)))
 	assert(Input.mouse_mode == Input.MOUSE_MODE_VISIBLE)
 	assert(not app.get("tracking").active)
+	assert(not audio.tracking_player.playing)
 	assert(app.get("result_snapshot").samples == [20.0, 40.0, 60.0, 80.0, 100.0])
 	var cache = app.get("result_cache")
 	assert(cache.latest("tracking").record.stats.median == 60.0)
@@ -396,7 +424,8 @@ func _run() -> void:
 	cache.entries.color.completed_us = Time.get_ticks_usec() - Cache.VALID_US
 	app.call("_update_latest_scores")
 	assert(app.get("save_button").disabled)
-	assert("EXPIRED" in app.get("profile_rows")[0].text)
+	assert("EXPIRED" in app.get("profile_total_status").text and app.get("profile_total").modulate.a < 1.0)
+	assert("EXPIRED" in app.get("profile_status")[0].text)
 	assert(app.get("profile_rows")[0].modulate.a < 1.0)
 	assert("color" in app.get("menu_radar").expired_projects)
 	app.call("_save_session")
@@ -420,9 +449,13 @@ func _run() -> void:
 	assert(history_store.sessions.size() == 1 and history_store.records.size() == 5)
 	assert(cache.selected(Time.get_ticks_usec()).is_empty())
 	assert(app.get("menu_tag").text.is_empty())
-	for row in app.get("profile_rows"):
+	for row in app.get("profile_status"):
 		assert("SAVED" in row.text, "saved scores remain on the menu")
 	assert(app.get("menu_radar").values.size() == 5)
+	var expected_total := 0.0
+	for entry in cache.entries.values():
+		expected_total += Scores.points(entry.record.project, entry.record.stats.median)
+	assert(app.get("profile_total").text == "%.1f / 500" % expected_total)
 	app.call("_save_session")
 	assert(history_store.sessions.size() == 1, "duplicate save must not append")
 	app.call("show_history")
@@ -432,8 +465,8 @@ func _run() -> void:
 	assert(history_page.chart.groups.size() == 1 and history_page.chart.groups[0].results.size() == 5)
 	assert(history_page.shown[0].tag == "mouse-A")
 	history_page.call("_show_group", history_page.shown[0])
-	assert("60.0 %" in history_page.detail.text)
-	assert("2D REACTION:" in history_page.detail.text and "3D AIM:" in history_page.detail.text)
+	assert("60.0 %" in history_page.detail_rules[4].text)
+	assert(history_page.detail_rows[0].text == "2D REACTION" and history_page.detail_rows[3].text == "3D AIM")
 	assert(history_page.shown[0].id == history_store.sessions[0].id)
 	assert(history_page.radar.values.size() == 5)
 	assert("/ 500" in history_page.list.get_item_text(0))
@@ -475,6 +508,15 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 	assert(not chart.bars.is_empty())
+	for item in chart.group_rects:
+		if is_equal_approx(item.rect.size.x, chart.GROUP_WIDTH):
+			var group_bars: Array = []
+			for visible_bar in chart.bars:
+				if item.rect.has_point(visible_bar.rect.get_center()):
+					group_bars.append(visible_bar.rect)
+			if group_bars.size() == item.group.results.size():
+				var midpoint: float = (group_bars[0].position.x + group_bars[-1].end.x) * 0.5
+				assert(is_equal_approx(midpoint, item.rect.get_center().x), "bars center in group bounds")
 	var bar: Dictionary = chart.bars[-1]
 	var motion := InputEventMouseMotion.new()
 	motion.position = bar.rect.get_center()
@@ -546,8 +588,10 @@ func _run() -> void:
 	assert(chart.bars.is_empty() and chart.group_rects.is_empty())
 	app.call("enter_project", "tracking")
 	tracking_state.prepare(Time.get_ticks_usec())
+	audio.set_tracking_weight(1.0)
 	app.call("_notification", Node.NOTIFICATION_APPLICATION_FOCUS_OUT)
 	assert(tracking_state.stage == TrackingState.Stage.INVALID)
+	assert(not audio.tracking_player.playing, "focus loss stops coverage feedback")
 	assert(tracking_state.coverage.is_empty())
 	assert(app.get("result_snapshot").is_empty())
 	app.call("_notification", Node.NOTIFICATION_APPLICATION_FOCUS_IN)
@@ -571,6 +615,7 @@ func _run() -> void:
 	DirAccess.remove_absolute(test_prefix + "-scores.txt")
 	DirAccess.remove_absolute(test_prefix + "-history.json")
 	audio.player.stop()
+	audio.tracking_player.stop()
 	# Let the audio mixer release stopped voices before scene shutdown.
 	await create_timer(0.2).timeout
 	app.queue_free()

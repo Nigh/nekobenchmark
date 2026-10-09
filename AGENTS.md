@@ -26,7 +26,8 @@ The bundled Maple Mono font is used directly as a Godot resource.
   (`[-π/2, π/2]`) and pitch is unrestricted. A click is valid whenever the
   target is inside the camera frustum; each target starts from a random left or
   right cover, crosses to the other cover over its one-second response window,
-  then times out. After a target round ends, it greys, falls, and fades before
+  then times out. A warm ceiling spotlight softly illuminates the three covers
+  and target crossing area. After a target round ends, it greys, falls, and fades before
   it is removed.
 - `OSU` is a 2D sequence test: five rounds. Each round arms when the player
   hits a fixed center green gate (play-area center). Hitting the gate starts a
@@ -51,7 +52,9 @@ The bundled Maple Mono font is used directly as a Godot resource.
 - `3D Aim` is a 3D clear-out test: five rounds. Each round arms when the
   player hits a fixed center green gate (same default world-center placement as Sens Lab
   at z = -8). Hitting the gate starts a random 1–3 second wait, then six
-  non-overlapping spheres appear at once. Spawns keep at least one target in
+  non-overlapping spheres appear at once. Five fixed world-space target layouts
+  appear once each per set in shuffled order, independent of the camera look.
+  Layouts keep at least one target in
   each view quadrant (top-left, top-right, bottom-left, bottom-right), stay
   inside about a 60° view cone, and stay inside the practice room. Visual sphere
   radius is 0.42 (1.2× the prior size). The player aims with limited mouse look
@@ -77,9 +80,14 @@ The bundled Maple Mono font is used directly as a Godot resource.
   Horizontal/vertical angles are 22/6 degrees times sine waves: x frequencies
   [0.5, 0.6, 0.7, 0.6, 0.8] Hz and y [0.7, 0.5, 0.6, 0.9, 0.7] Hz. Every path
   loops smoothly over 10 seconds, with phase t + 0.55/(TAU*0.2)*sin(TAU*0.2*t),
-  giving smooth speed modulation from 0.45× to 1.55× in a fixed repeatable order.
+  giving smooth speed modulation from 0.45× to 1.55×. The five fixed paths
+  appear once each per set in shuffled order, including after focus recovery.
+  The inner high-score circle is yellow. During scoring, inner/outer coverage
+  plays a continuous quiet 880/440 Hz tone respectively. This coverage tone is
+  silent outside, during preparation, on focus loss, at round completion and
+  when leaving the test; existing discrete cues remain.
   Main score is median weighted score percentage (higher is better);
-  mean angular error is also shown. Tracking uses rule_version 3, OSU uses 3, and other tests use 1.
+  mean angular error is also shown. Tracking uses rule_version 4, 3D Aim uses 2, OSU uses 3, and other tests use 1.
   Losing focus cancels the set; regaining focus automatically starts a fresh set. Misses reduce coverage but do not invalidate.
   LIVE shows remaining seconds and score; round results retain the flight
   animation. This complements reaction/click tests with sustained control.
@@ -121,7 +129,11 @@ The bundled Maple Mono font is used directly as a Godot resource.
   green for 2D Reaction/3D Reaction/OSU/3D Aim/Tracking across menu borders/text,
   score header badges, results, radar axes and history bars/legend. Score card
   titles have equal-width solid project-color backgrounds and dark bold text;
-  FontVariation emboldens Maple Mono without an extra bundled font.
+  FontVariation emboldens Maple Mono without an extra bundled font. Menu result
+  rows separate prominent points, smaller raw scores and muted save countdowns.
+  The menu shows total points out of 500 only when all five display snapshots
+  exist; incomplete totals show -- with a result count. Expired totals fade and
+  carry an EXPIRED label, while saved totals remain visible.
 - Scores measure the combined human + computer response chain, not isolated
   human RT or hardware latency. Meaningful comparisons keep one side fixed:
   different people on the same PC; the same person across PCs (device impact);
@@ -145,7 +157,8 @@ The bundled Maple Mono font is used directly as a Godot resource.
   into its list row over 0.5 seconds.
 - Mouse input is not accumulated and VSync is disabled to minimize software
   input-to-frame latency; tearing is an accepted trade-off.
-- A shared native AudioStreamPlayer plays cached, generated PCM cues: successful
+- A shared native AudioStreamPlayer plays cached, generated PCM cues, with a
+  separate looping player for continuous Tracking coverage feedback: successful
   responses/hits 22 ms, early input/misses/timeouts 35 ms, hover/press/slide
   10/15/8 ms. Entering WAIT from idle/arming plays a dedicated 90ms two-note
   start cue instead of the response/press cue; automatic reaction round waits
@@ -197,8 +210,11 @@ The bundled Maple Mono font is used directly as a Godot resource.
   tooltip with that test's raw/point score, rounds, completion time/UTC offset,
   sensitivity, tag, rules version, statistics and Tracking angular error. Leaving
   or scrolling hides the tooltip. Clicking anywhere in a chart group or a list row
-  selects the whole session and shows all test scores, rules versions, sensitivities,
-  session metadata/total and a radar at the lower right. Rules versions appear only
+  selects the whole session; white vertical selection edges enclose centered bars
+  and date labels (legacy single bars are also centered). Details separate a
+  prominent session total, muted metadata/tag, project-colored test names and
+  per-test points with secondary raw scores, rules versions and sensitivities,
+  alongside a radar at the lower right. Rules versions appear only
   in those details and tooltips. Legacy singles have only their actual bar/radar
   axis. Empty/single/zero/constant-value charts work. Cloud sync, export, editing
   and deletion are not included.
