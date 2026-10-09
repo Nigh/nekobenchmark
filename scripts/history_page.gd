@@ -10,6 +10,10 @@ var chart
 var radar
 var list: ItemList
 var detail: Label
+var detail_meta: Label
+var detail_rows: Array[Label] = []
+var detail_scores: Array[Label] = []
+var detail_rules: Array[Label] = []
 var heading: Label
 var page_label: Label
 var previous: Button
@@ -47,8 +51,23 @@ func setup(history) -> void:
 	list.size = Vector2(540, 252)
 	list.item_selected.connect(func(index: int) -> void: _show_group(shown[index]))
 	add_child(list)
-	detail = _add_label("Select a session to see all five tests.", Vector2(604, 394), Vector2(336, 266), 13)
-	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	detail = _add_label("Select a session", Vector2(604, 394), Vector2(336, 32), 23)
+	detail_meta = _add_label("to see all five tests.", Vector2(604, 430), Vector2(336, 40), 12)
+	detail_meta.add_theme_color_override("font_color", Palette.MUTED)
+	detail_meta.mouse_filter = Control.MOUSE_FILTER_PASS
+	detail_meta.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	for index in Scores.PROJECTS.size():
+		var mode: Dictionary = Scores.PROJECTS[index]
+		var y := 478 + index * 36
+		var name_label := _add_label(mode.name, Vector2(604, y), Vector2(166, 20), 14)
+		name_label.add_theme_color_override("font_color", Palette.PROJECT_COLORS[mode.key])
+		var score := _add_label("--", Vector2(770, y), Vector2(158, 20), 18)
+		score.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		var rules := _add_label("", Vector2(604, y + 20), Vector2(336, 16), 12)
+		rules.add_theme_color_override("font_color", Palette.MUTED)
+		detail_rows.append(name_label)
+		detail_scores.append(score)
+		detail_rules.append(rules)
 	radar = Radar.new()
 	radar.position = Vector2(952, 388)
 	radar.size = Vector2(288, 270)
@@ -89,7 +108,13 @@ func refresh() -> void:
 	heading.text = store.error if not store.error.is_empty() else "0–100 points · %d sessions · hover for test details · click a group to select · drag or scroll horizontally" % filtered.size()
 	heading.add_theme_color_override("font_color", Palette.ERROR if not store.error.is_empty() else Palette.MUTED)
 	page_index = 0
-	detail.text = "Select a session to see all five tests."
+	detail.text = "Select a session"
+	detail_meta.text = "to see all five tests."
+	detail_meta.tooltip_text = ""
+	for index in detail_scores.size():
+		detail_rows[index].modulate.a = 1.0
+		detail_scores[index].text = "--"
+		detail_rules[index].text = ""
 	var empty: Array[Dictionary] = []
 	radar.set_results(empty)
 	tooltip.hide()
@@ -121,11 +146,19 @@ func _fill_list() -> void:
 
 func _show_group(group: Dictionary) -> void:
 	var bias := int(group.utc_offset_minutes)
-	detail.text = "%s UTC%s%02d:%02d\nTag: %s\n%s" % [group.local_time, "+" if bias >= 0 else "-", absi(bias) / 60, absi(bias) % 60, group.tag if not group.tag.is_empty() else "--", "Legacy single result" if group.get("legacy", false) else "Total: %.1f / 500" % total_points(group)]
-	for mode in Scores.PROJECTS:
+	detail.text = "Legacy single result" if group.get("legacy", false) else "%.1f / 500 points" % total_points(group)
+	detail_meta.text = "%s UTC%s%02d:%02d\nTag: %s" % [group.local_time, "+" if bias >= 0 else "-", absi(bias) / 60, absi(bias) % 60, group.tag if not group.tag.is_empty() else "--"]
+	detail_meta.tooltip_text = detail_meta.text
+	for index in Scores.PROJECTS.size():
+		var mode: Dictionary = Scores.PROJECTS[index]
+		detail_scores[index].text = "--"
+		detail_rules[index].text = "No result"
+		detail_rows[index].modulate.a = 0.4
 		for result in group.results:
 			if result.project == mode.key:
-				detail.text += "\n%s: %s\nRules v%d / Sens %.2f" % [mode.name, Scores.display(mode.key, result.stats.median), result.rule_version, result.look_sens]
+				detail_rows[index].modulate.a = 1.0
+				detail_scores[index].text = "%.1f pts" % Scores.points(mode.key, result.stats.median)
+				detail_rules[index].text = "%.1f %s  /  Rules v%d  /  Sens %.2f" % [result.stats.median, "%" if mode.key == "tracking" else "ms", result.rule_version, result.look_sens]
 	var results: Array[Dictionary] = []
 	results.assign(group.results)
 	radar.set_results(results)

@@ -22,7 +22,7 @@ func _ready() -> void:
 	var material := ShaderMaterial.new()
 	material.shader = preload("res://shaders/tracking_target.gdshader")
 	material.set_shader_parameter("outer_color", Palette.PRIMARY)
-	material.set_shader_parameter("inner_color", Palette.SUCCESS)
+	material.set_shader_parameter("inner_color", Palette.WARNING)
 	quad.material = material
 	target.mesh = quad
 	add_child(target)

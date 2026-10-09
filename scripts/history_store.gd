@@ -4,7 +4,7 @@ const Scores = preload("res://scripts/score_store.gd")
 const Config = preload("res://scripts/camera_3d_config.gd")
 const FORMAT_VERSION := 2
 const RULE_VERSION := 1
-const TRACKING_RULE_VERSION := 3
+const TRACKING_RULE_VERSION := 4
 var path := "user://history.json"
 var sessions: Array[Dictionary] = []
 var legacy_records: Array[Dictionary] = []
@@ -243,7 +243,7 @@ func _write_history(updated: Array) -> bool:
 static func current_rule_version(project: String) -> int:
 	if project == "tracking":
 		return TRACKING_RULE_VERSION
-	return 3 if project == "osu" else RULE_VERSION
+	return 3 if project == "osu" else 2 if project == "spheres" else RULE_VERSION
 
 
 func filtered(project: String, tag: String = "", rule_version: int = -1) -> Array[Dictionary]:

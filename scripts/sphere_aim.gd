@@ -16,23 +16,30 @@ const SPHERE_RADIUS := 0.42 # 1.2× prior 0.35
 const HIT_RADIUS_SCALE := 1.1
 const MIN_SEPARATION := SPHERE_RADIUS * 2.0 + 0.45
 const SPREAD_FOV_DEG := 60.0
-const DEPTH_MIN := 8.0
-const DEPTH_MAX := 16.0
 const GATE_Z := -8.0 # Same as Sens Lab's default distance.
 const GATE_COLOR := Palette.SUCCESS
+
+# Fixed world-space layouts; each set uses every layout once.
+const LAYOUTS := [
+	[Vector3(-3.5, 3.5, -10), Vector3(3.5, 3.5, -10), Vector3(-3.5, 0.7, -10), Vector3(3.5, 0.7, -10), Vector3(-1.2, 2.2, -12), Vector3(1.2, 4.5, -12)],
+	[Vector3(-4, 4, -12), Vector3(2, 3, -10), Vector3(-2, 0.7, -10), Vector3(4, 0.7, -12), Vector3(-0.8, 3.5, -14), Vector3(1.2, 1.5, -14)],
+	[Vector3(-2, 4.5, -12), Vector3(4, 3, -12), Vector3(-4, 0.7, -12), Vector3(2, 0.7, -10), Vector3(-1, 2, -10), Vector3(1, 3.2, -14)],
+	[Vector3(-4, 2.5, -12), Vector3(4, 4.5, -12), Vector3(-2, 0.7, -12), Vector3(3.5, 0.7, -14), Vector3(-1, 4, -10), Vector3(1.2, 2, -10)],
+	[Vector3(-3, 4.5, -14), Vector3(3, 4.5, -14), Vector3(-4, 0.7, -10), Vector3(4, 0.7, -10), Vector3(-1.5, 2.5, -10), Vector3(1.5, 1.8, -12)],
+]
 
 var active := false
 var gate_active := false
 var look_sensitivity := Camera3DConfig.LOOK_SENS_DEFAULT
 var yaw := 0.0
 var pitch := -0.05
-var rng := RandomNumberGenerator.new()
+var layout_order: Array = [0, 1, 2, 3, 4]
+var layout_cursor := 0
 var target_bodies: Array[StaticBody3D] = []
 var alive: Array[bool] = []
 
 
 func _ready() -> void:
-	rng.randomize()
 	PracticeRoom.build(self)
 	Camera3DConfig.apply(camera)
 	_apply_camera_rotation()
@@ -51,6 +58,8 @@ func set_active(value: bool) -> void:
 	_apply_camera_rotation()
 	camera.current = value
 	if value:
+		layout_order.shuffle()
+		layout_cursor = 0
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
@@ -77,93 +86,14 @@ func spawn_gate() -> void:
 
 func spawn_targets() -> void:
 	clear_targets()
-	var half := deg_to_rad(SPREAD_FOV_DEG * 0.5)
-	var positions: Array[Vector3] = []
-	# One required sample per view quadrant (TL, TR, BL, BR), then two free.
-	var quads: Array[Dictionary] = [
-		{"ax_lo": -half, "ax_hi": -0.03, "ay_lo": 0.03, "ay_hi": half},
-		{"ax_lo": 0.03, "ax_hi": half, "ay_lo": 0.03, "ay_hi": half},
-		{"ax_lo": -half, "ax_hi": -0.03, "ay_lo": -half * 0.55, "ay_hi": -0.03},
-		{"ax_lo": 0.03, "ax_hi": half, "ay_lo": -half * 0.55, "ay_hi": -0.03},
-	]
-	for quad in quads:
-		var placed := false
-		for _attempt in 500:
-			var candidate := _random_in_quad(quad, half)
-			if candidate == Vector3.INF:
-				continue
-			if _valid_target(positions, candidate):
-				positions.append(candidate)
-				placed = true
-				break
-		if not placed:
-			positions.append(_fallback_quad_pos(positions.size(), half))
-	while positions.size() < TARGET_COUNT:
-		var attempts := 0
-		var added := false
-		while attempts < 400:
-			attempts += 1
-			var ax := rng.randf_range(-half, half)
-			var ay := rng.randf_range(-half * 0.55, half)
-			if sqrt(ax * ax + ay * ay) > half:
-				continue
-			var pos := _world_from_view(ax, ay, rng.randf_range(DEPTH_MIN, DEPTH_MAX))
-			if _valid_target(positions, pos):
-				positions.append(pos)
-				added = true
-				break
-		if not added:
-			positions.append(_fallback_quad_pos(positions.size(), half))
+	var positions: Array = LAYOUTS[layout_order[layout_cursor]]
+	layout_cursor += 1
 	for index in positions.size():
 		var color := Palette.PRIMARY.lerp(Palette.SECONDARY, float(index) / 5.0)
 		var body := _make_sphere(positions[index], color)
 		targets_root.add_child(body)
 		target_bodies.append(body)
 		alive.append(true)
-
-
-func _random_in_quad(quad: Dictionary, half: float) -> Vector3:
-	var ax: float = rng.randf_range(quad.ax_lo, quad.ax_hi)
-	var ay: float = rng.randf_range(quad.ay_lo, quad.ay_hi)
-	if sqrt(ax * ax + ay * ay) > half:
-		return Vector3.INF
-	return _world_from_view(ax, ay, rng.randf_range(DEPTH_MIN, DEPTH_MAX))
-
-
-func _fallback_quad_pos(index: int, half: float) -> Vector3:
-	# Deterministic seeds: first four cover quadrants; extras sit near mid-sides.
-	var seeds: Array[Vector2] = [
-		Vector2(-0.45, 0.40),
-		Vector2(0.45, 0.40),
-		Vector2(-0.45, -0.28),
-		Vector2(0.45, -0.28),
-		Vector2(-0.20, 0.15),
-		Vector2(0.20, -0.12),
-	]
-	var seed: Vector2 = seeds[clampi(index, 0, seeds.size() - 1)]
-	var ax := seed.x * half
-	var ay := seed.y * half
-	var depth := lerpf(DEPTH_MIN + 1.0, DEPTH_MAX - 1.0, float(index) / float(TARGET_COUNT - 1))
-	var pos := _world_from_view(ax, ay, depth)
-	if not PracticeRoom.contains_point(pos, SPHERE_RADIUS + 0.05):
-		pos.y = clampf(pos.y, PracticeRoom.FLOOR_TOP + SPHERE_RADIUS + 0.15, PracticeRoom.CEILING_Y - SPHERE_RADIUS)
-		pos.x = clampf(pos.x, -PracticeRoom.HALF_X + SPHERE_RADIUS, PracticeRoom.HALF_X - SPHERE_RADIUS)
-		pos.z = clampf(pos.z, PracticeRoom.Z_FRONT + SPHERE_RADIUS, -DEPTH_MIN)
-	return pos
-
-
-func _world_from_view(yaw_rad: float, pitch_rad: float, depth: float) -> Vector3:
-	var local := Vector3(sin(yaw_rad) * cos(pitch_rad), sin(pitch_rad), -cos(yaw_rad) * cos(pitch_rad)).normalized()
-	return camera.global_position + camera.global_transform.basis * local * depth
-
-
-func _valid_target(existing: Array[Vector3], pos: Vector3) -> bool:
-	if not PracticeRoom.contains_point(pos, SPHERE_RADIUS + 0.1):
-		return false
-	for other in existing:
-		if pos.distance_to(other) < MIN_SEPARATION:
-			return false
-	return true
 
 
 func fire_ray() -> int:

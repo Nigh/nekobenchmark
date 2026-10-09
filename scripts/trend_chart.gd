@@ -58,19 +58,25 @@ func _draw() -> void:
 		draw_string(font, Vector2(80, size.y * 0.5), "No saved sessions. Complete and save five tests from Menu.", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Palette.MUTED)
 		return
 	for index in groups.size():
-		var x := area.position.x + index * GROUP_WIDTH - offset + 10
-		if x + GROUP_WIDTH < area.position.x or x > area.end.x:
-			continue
 		var group: Dictionary = groups[index]
-		var group_rect := Rect2(x - 10, area.position.y, GROUP_WIDTH, area.size.y).intersection(area)
+		var group_x := area.position.x + index * GROUP_WIDTH - offset
+		var content_width: float = group.results.size() * (BAR_WIDTH + BAR_GAP) - BAR_GAP
+		var x := group_x + (GROUP_WIDTH - content_width) * 0.5
+		if group_x + GROUP_WIDTH < area.position.x or group_x > area.end.x:
+			continue
+		var group_rect := Rect2(group_x, area.position.y, GROUP_WIDTH, area.size.y + 22).intersection(Rect2(area.position, area.size + Vector2(0, 22)))
 		group_rects.append({"rect": group_rect, "group": group})
 		if group.id == selected_id:
 			draw_rect(group_rect, Color(Palette.INK, 0.07))
+			for edge in [group_x + 1, group_x + GROUP_WIDTH - 1]:
+				if edge >= area.position.x and edge <= area.end.x:
+					draw_line(Vector2(edge, area.position.y), Vector2(edge, area.end.y + 22), Color.WHITE, 1.0)
 		for result in group.results:
 			var column := 0
-			for mode_index in 5:
-				if Scores.PROJECTS[mode_index].key == result.project:
-					column = mode_index
+			if group.results.size() > 1:
+				for mode_index in Scores.PROJECTS.size():
+					if Scores.PROJECTS[mode_index].key == result.project:
+						column = mode_index
 			var points := Scores.points(result.project, result.stats.median)
 			var rect := Rect2(x + column * (BAR_WIDTH + BAR_GAP), area.end.y - points / 100.0 * area.size.y, BAR_WIDTH, points / 100.0 * area.size.y)
 			var visible_rect := rect.intersection(area)
@@ -83,9 +89,12 @@ func _draw() -> void:
 			var hit_rect := Rect2(rect.position.x, area.end.y - maxf(6.0, rect.size.y), BAR_WIDTH, maxf(6.0, rect.size.y)).intersection(area)
 			if points == 0.0 and result.id == hovered_id:
 				draw_rect(hit_rect, Palette.INK, false, 2)
-			bars.append({"rect": hit_rect, "record": result})
-		if x >= area.position.x and x + 105 < area.end.x:
-			draw_string(font, Vector2(x, area.end.y + 17), group.local_time.substr(5, 11), HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Palette.MUTED)
+			if hit_rect.has_area():
+				bars.append({"rect": hit_rect, "record": result})
+		var date: String = group.local_time.substr(5, 11)
+		var date_x := group_x + (GROUP_WIDTH - font.get_string_size(date, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x) * 0.5
+		if date_x >= area.position.x and date_x + font.get_string_size(date, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x <= area.end.x:
+			draw_string(font, Vector2(date_x, area.end.y + 17), date, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Palette.MUTED)
 	if maximum_offset() > 0.0:
 		var width := maxf(24, area.size.x * area.size.x / (groups.size() * GROUP_WIDTH))
 		draw_rect(Rect2(area.position.x, size.y - 5, area.size.x, 3), Palette.BORDER)

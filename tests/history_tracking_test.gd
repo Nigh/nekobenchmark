@@ -9,6 +9,7 @@ const Room = preload("res://scripts/practice_room.gd")
 
 func _init() -> void:
 	_test_cache()
+	_test_fixed_layouts_and_order()
 	_test_grading_and_preparation()
 	var prefix := "user://history-check-%d" % Time.get_ticks_usec()
 	var path := prefix + ".json"
@@ -30,7 +31,7 @@ func _init() -> void:
 	assert(loaded.sessions[0].results[0].local_time == record.local_time)
 	assert(loaded.filtered("color", "mouse-A").size() == 1)
 	assert(loaded.filtered("color", "mouse-B").is_empty())
-	assert(loaded.filtered("tracking")[0].rule_version == 3)
+	assert(loaded.filtered("tracking")[0].rule_version == 4)
 	assert(loaded.get_session(loaded.records[0]).results.size() == 5)
 	var future := _results()
 	future[0].rule_version = 2
@@ -281,8 +282,8 @@ func _test_grading_and_preparation() -> void:
 		state.coverage.resize(index)
 		state.prepare(0)
 		for step in range(1000):
-			var a := Tracking.target_position(index, state.movement_seconds(step * 10_000)) - origin
-			var b := Tracking.target_position(index, state.movement_seconds(step * 10_000 + 1000)) - origin
+			var a := Tracking.target_position(state.path_index(), state.movement_seconds(step * 10_000)) - origin
+			var b := Tracking.target_position(state.path_index(), state.movement_seconds(step * 10_000 + 1000)) - origin
 			assert(rad_to_deg(a.angle_to(b)) / 0.001 <= Tracking.PREP_MAX_SPEED + 0.1)
 		var before := state.movement_seconds(2_000_000)
 		state.stage = Tracking.Stage.ACTIVE
@@ -291,3 +292,35 @@ func _test_grading_and_preparation() -> void:
 		var slow := state.preparation_speed()
 		assert(absf((state.movement_seconds(state.start_us + 1000) - before) / 0.001 - slow) < 0.001)
 		assert(absf((state.movement_seconds(state.start_us + 1_001_000) - state.movement_seconds(state.start_us + 1_000_000)) / 0.001 - 1.0) < 0.00001)
+
+
+func _test_fixed_layouts_and_order() -> void:
+	var aim_script = preload("res://scripts/sphere_aim.gd")
+	assert(aim_script.LAYOUTS.size() == 5)
+	var origin := Vector3(0, 1.4, 0)
+	for layout in aim_script.LAYOUTS:
+		assert(layout.size() == aim_script.TARGET_COUNT)
+		var quadrants := [false, false, false, false]
+		for index in layout.size():
+			var pos: Vector3 = layout[index]
+			assert(Room.contains_point(pos, aim_script.SPHERE_RADIUS + 0.1))
+			assert(Vector3.FORWARD.angle_to(pos - origin) <= deg_to_rad(30.0))
+			quadrants[(0 if pos.x < 0 else 1) + (0 if pos.y > origin.y else 2)] = true
+			for other in range(index):
+				assert(pos.distance_to(layout[other]) >= aim_script.MIN_SEPARATION)
+				var a: Vector3 = pos - origin
+				var b: Vector3 = layout[other] - origin
+				assert(a.angle_to(b) > asin(aim_script.SPHERE_RADIUS / a.length()) + asin(aim_script.SPHERE_RADIUS / b.length()), "targets cannot overlap from the starting view")
+		assert(not false in quadrants)
+	var state = Tracking.new()
+	var orders := {}
+	for attempt in 20:
+		state.reset()
+		orders[str(state.path_order)] = true
+		var sorted: Array = state.path_order.duplicate()
+		sorted.sort()
+		assert(sorted == [0, 1, 2, 3, 4])
+		for index in 5:
+			state.coverage.resize(index)
+			assert(state.path_index() == state.path_order[index])
+	assert(orders.size() > 1, "sets shuffle path order")

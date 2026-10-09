@@ -10,6 +10,7 @@ const RADIUS := 0.42
 const INNER_RADIUS := 0.21
 const PREP_MAX_SPEED := 20.0 # Degrees per second.
 
+var path_order: Array = [0, 1, 2, 3, 4]
 var stage := Stage.READY
 var motion_start_us := 0
 var acquired_us := 0
@@ -24,6 +25,7 @@ var errors: Array[float] = []
 
 func reset() -> void:
 	stage = Stage.READY
+	path_order.shuffle()
 	coverage.clear()
 	errors.clear()
 	covered_us = 0.0
@@ -84,8 +86,12 @@ static func target_position(round_index: int, seconds: float, height: float = 1.
 	return Vector3(8.0 * tan(horizontal), height + 8.0 * tan(vertical), -8.0)
 
 
+func path_index() -> int:
+	return path_order[clampi(coverage.size(), 0, 4)]
+
+
 func preparation_speed() -> float:
-	var index := clampi(coverage.size(), 0, 4)
+	var index := path_index()
 	var maximum := 1.55 * TAU * Vector2(22.0 * HZ_X[index], 6.0 * HZ_Y[index]).length()
 	return minf(1.0, PREP_MAX_SPEED / maximum)
 
