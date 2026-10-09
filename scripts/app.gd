@@ -80,6 +80,8 @@ var sens_chrome_tween: Tween
 var sens_chrome_full := false
 var sens_last_adjust_sec := -INF
 var profile_rows: Array[Label] = []
+var profile_titles: Array[Label] = []
+var menu_radar: Control
 var result_cache = ResultCache.new()
 var last_menu_refresh_us := -1_000_000
 var menu_notice := ""
@@ -137,13 +139,12 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	var now := Time.get_ticks_usec()
-	var expired := result_cache.prune(now)
 	if page == "sens":
 		_sync_sens_alt_cursor()
 		_update_sens_chrome()
 	if page.is_empty():
-		if expired or now - last_menu_refresh_us >= 1_000_000:
-			_update_best_scores(now)
+		if now - last_menu_refresh_us >= 1_000_000:
+			_update_latest_scores(now)
 		return
 	if summary.visible:
 		return
@@ -294,7 +295,7 @@ func show_menu() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	$CanvasLayer/HUD.hide()
 	_update_trial_list_opacity()
-	_update_best_scores()
+	_update_latest_scores()
 
 
 func enter_project(project: String) -> void:
@@ -372,7 +373,7 @@ func complete_summary() -> void:
 	var result: Dictionary = result_snapshot.stats
 	var key := _score_key()
 	var unit := "%" if key == "tracking" else "ms"
-	var radar_results := result_cache.selected(Time.get_ticks_usec())
+	var radar_results := result_cache.displayed()
 	for index in radar_results.size():
 		if radar_results[index].project == key:
 			radar_results[index] = result_snapshot
@@ -413,12 +414,12 @@ func _save_session() -> void:
 	if selected.size() != ScoreStore.PROJECTS.size():
 		menu_notice = "Complete all five tests within one hour before saving."
 	elif history.save_session(selected, menu_tag.text):
-		result_cache.clear()
+		result_cache.mark_saved()
 		menu_tag.clear()
-		menu_notice = "Session saved. Complete five tests to save another."
+		menu_notice = "Session saved. Latest results remain visible. Complete five new tests to save again."
 	else:
 		menu_notice = history.error
-	_update_best_scores()
+	_update_latest_scores()
 
 
 func _project_name(key: String) -> String:
@@ -977,7 +978,7 @@ func _build_profile_card() -> void:
 	card.size = Vector2(600, 560)
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	menu.add_child(card)
-	var heading := _label("UNSAVED / BEST WITHIN 1 HOUR", 16, MUTED)
+	var heading := _label("LATEST RESULTS / 1-HOUR SAVE WINDOW", 16, MUTED)
 	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	heading.position = Vector2(664, 108)
 	heading.size = Vector2(552, 28)
@@ -985,8 +986,8 @@ func _build_profile_card() -> void:
 	for index in ScoreStore.PROJECTS.size():
 		var mode: Dictionary = ScoreStore.PROJECTS[index]
 		var title := _label(mode.name, 16, Palette.BASE)
-		title.position = Vector2(664, 150 + index * 90)
-		title.size = Vector2(228, 28)
+		title.position = Vector2(664, 150 + index * 72)
+		title.size = Vector2(210, 26)
 		var fill := StyleBoxFlat.new()
 		fill.bg_color = Palette.PROJECT_COLORS[mode.key]
 		title.add_theme_stylebox_override("normal", fill)
@@ -995,12 +996,18 @@ func _build_profile_card() -> void:
 		bold.variation_embolden = 0.7
 		title.add_theme_font_override("font", bold)
 		menu.add_child(title)
-		var row := _label("", 17, INK)
+		var row := _label("", 13, INK)
 		row.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-		row.position = Vector2(664, 182 + index * 90)
-		row.size = Vector2(552, 28)
+		row.position = Vector2(664, 178 + index * 72)
+		row.size = Vector2(300, 30)
 		menu.add_child(row)
 		profile_rows.append(row)
+		profile_titles.append(title)
+	menu_radar = Radar.new()
+	menu_radar.position = Vector2(950, 212)
+	menu_radar.size = Vector2(282, 280)
+	menu_radar.caption = "LATEST RESULTS / -- MISSING"
+	menu.add_child(menu_radar)
 	menu_tag = LineEdit.new()
 	menu_tag.placeholder_text = "Tag (optional): device, setup, or form"
 	menu_tag.max_length = 64
@@ -1148,7 +1155,7 @@ func _build_summary() -> void:
 	summary_time.size = Vector2(600, 30)
 	summary_time.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	summary.add_child(summary_time)
-	var hint := _label("Added to the 1-hour cache. Save all five tests from Menu.", 14, MUTED)
+	var hint := _label("Latest result updated. Save all five fresh tests from Menu.", 14, MUTED)
 	hint.position = Vector2(340, 460)
 	hint.size = Vector2(800, 40)
 	summary.add_child(hint)
@@ -1477,22 +1484,30 @@ func _finish_score_flight(index: int, score_text: String) -> void:
 	score_flight_active = false
 
 
-func _update_best_scores(now_us: int = -1) -> void:
+func _update_latest_scores(now_us: int = -1) -> void:
 	if now_us < 0:
 		now_us = Time.get_ticks_usec()
 	last_menu_refresh_us = now_us
-	result_cache.prune(now_us)
 	storage_status.text = " / ".join([scores.error, history.error]).trim_prefix(" / ").trim_suffix(" / ")
-	var completed := 0
+	var completed := result_cache.selected(now_us).size()
+	menu_radar.set_results(result_cache.displayed())
+	menu_radar.expired_projects.clear()
 	for index in ScoreStore.PROJECTS.size():
 		var mode: Dictionary = ScoreStore.PROJECTS[index]
-		var entry: Dictionary = result_cache.best(mode.key)
+		var entry: Dictionary = result_cache.latest(mode.key)
+		profile_rows[index].modulate.a = 1.0
+		profile_titles[index].modulate.a = 1.0
 		if entry.is_empty():
-			profile_rows[index].text = "--  /  NO VALID UNSAVED RESULT"
+			profile_rows[index].text = "-- / NO VALID RESULT"
 			continue
-		completed += 1
-		var remaining := ceili(float(ResultCache.VALID_US - (now_us - int(entry.completed_us))) / 1_000_000.0)
-		profile_rows[index].text = "%s / %02d:%02d LEFT" % [ScoreStore.display(mode.key, entry.record.stats.median), remaining / 60, remaining % 60]
+		var is_expired := result_cache.expired(entry, now_us)
+		var remaining := maxi(0, ceili(float(ResultCache.VALID_US - (now_us - int(entry.completed_us))) / 1_000_000.0))
+		var status := "EXPIRED" if is_expired else "%02d:%02d LEFT%s" % [remaining / 60, remaining % 60, " / SAVED" if entry.saved else ""]
+		profile_rows[index].text = "%s\n%s" % [ScoreStore.display(mode.key, entry.record.stats.median), status]
+		if is_expired:
+			profile_rows[index].modulate.a = 0.4
+			profile_titles[index].modulate.a = 0.4
+			menu_radar.expired_projects.append(mode.key)
 	save_button.disabled = completed != ScoreStore.PROJECTS.size() or not history.writable
 	menu_tag.editable = history.writable
 	save_status.text = menu_notice if not menu_notice.is_empty() else "%d / 5 ready. Complete all five within one hour to save." % completed
@@ -1564,7 +1579,7 @@ func show_history() -> void:
 	page = "history"
 	menu.hide()
 	history_page.show()
-	history_page.refresh(true)
+	history_page.refresh()
 
 
 func _notification(what: int) -> void:

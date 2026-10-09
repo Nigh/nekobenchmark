@@ -365,7 +365,7 @@ func _run() -> void:
 	assert(not app.get("tracking").active)
 	assert(app.get("result_snapshot").samples == [20.0, 40.0, 60.0, 80.0, 100.0])
 	var cache = app.get("result_cache")
-	assert(cache.best("tracking").record.stats.median == 60.0)
+	assert(cache.latest("tracking").record.stats.median == 60.0)
 	app.call("_save_session")
 	assert(app.get("history").sessions.is_empty(), "save is only allowed on the menu")
 	app.call("show_menu")
@@ -386,21 +386,23 @@ func _run() -> void:
 	assert(cache.selected(Time.get_ticks_usec()).size() == 5)
 	assert(not app.get("save_button").disabled)
 	assert(FileAccess.get_file_as_string(scores.score_path) == settings_before, "finishing tests never writes scores")
-	var tracking_backup: Dictionary = cache.best("tracking").record.duplicate(true)
+	var tracking_backup: Dictionary = cache.latest("tracking").record.duplicate(true)
 	app.call("enter_project", "color")
-	cache.candidates.tracking[0].completed_us = Time.get_ticks_usec() - Cache.VALID_US
+	cache.entries.tracking.completed_us = Time.get_ticks_usec() - Cache.VALID_US
 	app.call("_process", 0.0)
-	assert(cache.best("tracking").is_empty(), "cache expires while another test is open")
+	assert(cache.expired(cache.latest("tracking"), Time.get_ticks_usec()), "cache expires while another test is open")
 	cache.add(tracking_backup, Time.get_ticks_usec())
 	app.call("show_menu")
-	cache.candidates.color[0].completed_us = Time.get_ticks_usec() - Cache.VALID_US
-	app.call("_update_best_scores")
+	cache.entries.color.completed_us = Time.get_ticks_usec() - Cache.VALID_US
+	app.call("_update_latest_scores")
 	assert(app.get("save_button").disabled)
-	assert("NO VALID UNSAVED RESULT" in app.get("profile_rows")[0].text)
+	assert("EXPIRED" in app.get("profile_rows")[0].text)
+	assert(app.get("profile_rows")[0].modulate.a < 1.0)
+	assert("color" in app.get("menu_radar").expired_projects)
 	app.call("_save_session")
 	assert(app.get("history").sessions.is_empty(), "expiry is rechecked before saving")
 	cache.add(History.snapshot("color", [100000, 200000, 300000, 400000, 500000], scores.look_sens), Time.get_ticks_usec())
-	app.call("_update_best_scores")
+	app.call("_update_latest_scores")
 	app.get("menu_tag").text = "mouse-A"
 	app.get("menu_tag").grab_focus()
 	count_before = audio.play_count
@@ -419,20 +421,22 @@ func _run() -> void:
 	assert(cache.selected(Time.get_ticks_usec()).is_empty())
 	assert(app.get("menu_tag").text.is_empty())
 	for row in app.get("profile_rows"):
-		assert("NO VALID UNSAVED RESULT" in row.text, "saved scores never remain on the menu")
+		assert("SAVED" in row.text, "saved scores remain on the menu")
+	assert(app.get("menu_radar").values.size() == 5)
 	app.call("_save_session")
 	assert(history_store.sessions.size() == 1, "duplicate save must not append")
 	app.call("show_history")
 	var history_page = app.get("history_page")
-	history_page.project_select.select(4)
-	history_page.refresh(true)
+	history_page.refresh()
 	assert(history_page.shown.size() == 1)
 	assert(history_page.chart.groups.size() == 1 and history_page.chart.groups[0].results.size() == 5)
 	assert(history_page.shown[0].tag == "mouse-A")
-	history_page.call("_show_record", history_page.shown[0])
+	history_page.call("_show_group", history_page.shown[0])
 	assert("60.0 %" in history_page.detail.text)
 	assert("2D REACTION:" in history_page.detail.text and "3D AIM:" in history_page.detail.text)
-	assert(history_page.shown[0].session_id == history_store.sessions[0].id)
+	assert(history_page.shown[0].id == history_store.sessions[0].id)
+	assert(history_page.radar.values.size() == 5)
+	assert("/ 500" in history_page.list.get_item_text(0))
 	for index in 55:
 		var session: Dictionary = history_store.sessions[0].duplicate(true)
 		session.id += "-%d" % index
@@ -456,38 +460,90 @@ func _run() -> void:
 	var legacy_record: Dictionary = History.snapshot("tracking", [10.0, 10.0, 10.0, 10.0, 10.0], 1.0, [0, 0, 0, 0, 0])
 	history_store.legacy_records.append(legacy_record)
 	history_store.records.append(legacy_record)
-	history_page.refresh(true)
-	assert(history_page.filtered.size() == 56, "group filter isolates every project's rules")
-	history_page.version_select.select(1)
 	history_page.refresh()
-	assert(history_page.filtered.size() == 1 and history_page.chart.groups[0].results.size() == 5)
-	history_page.version_select.select(2)
-	history_page.refresh()
-	assert(history_page.filtered.size() == 1 and history_page.chart.groups[0].results.size() == 1, "legacy chart never fabricates other tests")
-	history_page.version_select.select(0)
-	history_page.refresh()
+	assert(history_page.filtered.size() == 58, "all sessions, versions and legacy singles are visible")
 	assert(history_page.shown.size() == 50)
-	assert(history_page.chart.groups.size() == 56)
+	assert(history_page.chart.groups.size() == 58)
 	var chart = history_page.chart
+	assert(not chart.gui_input.get_connections().is_empty(), "chart keeps shared UI audio bindings")
 	assert(chart.maximum_offset() > 0.0 and chart.offset == chart.maximum_offset())
 	var scroll := InputEventMouseButton.new()
 	scroll.button_index = MOUSE_BUTTON_WHEEL_UP
 	scroll.pressed = true
 	chart.call("_gui_input", scroll)
 	assert(chart.offset < chart.maximum_offset())
-	var other_result: Dictionary = chart.groups[0].results[0]
-	chart.record_selected.emit(other_result)
-	assert("2D REACTION: sens" in history_page.detail.text)
+	await process_frame
+	await process_frame
+	assert(not chart.bars.is_empty())
+	var bar: Dictionary = chart.bars[-1]
+	var motion := InputEventMouseMotion.new()
+	motion.position = bar.rect.get_center()
+	var selection_before: String = chart.selected_id
+	chart.call("_gui_input", motion)
+	assert(chart.hovered_id == bar.record.id and history_page.tooltip.visible)
+	assert(chart.selected_id == selection_before, "hover cannot change the selected session")
+	var chart_click := InputEventMouseButton.new()
+	chart_click.button_index = MOUSE_BUTTON_LEFT
+	chart_click.position = motion.position
+	chart_click.pressed = true
+	chart.call("_gui_input", chart_click)
+	chart_click.pressed = false
+	chart.call("_gui_input", chart_click)
+	var selected_group: Dictionary = {}
+	for entry in chart.groups:
+		if entry.id == chart.selected_id:
+			selected_group = entry
+	assert(not selected_group.is_empty())
+	assert(history_page.radar.values.size() == selected_group.results.size(), "click selects all results in the group")
+	var selected_before_drag: String = chart.selected_id
+	chart_click.pressed = true
+	chart.call("_gui_input", chart_click)
+	motion.relative = Vector2(30, 0)
+	chart.call("_gui_input", motion)
+	chart_click.pressed = false
+	chart.call("_gui_input", chart_click)
+	assert(chart.selected_id == selected_before_drag and not history_page.tooltip.visible, "drag scroll cannot select a session")
+	var group: Dictionary = chart.groups[0]
+	chart.group_selected.emit(group)
+	assert(history_page.radar.values.size() == 5)
+	assert(chart.selected_id == group.id)
+	var other_result: Dictionary = group.results[0]
+	chart.record_hovered.emit(other_result)
+	assert(history_page.tooltip.visible)
+	assert("Rules v" in history_page.tooltip_label.text and "Rounds (ms)" in history_page.tooltip_label.text)
+	chart.record_hovered.emit({})
+	assert(not history_page.tooltip.visible)
 	assert(not history_page.next.disabled)
 	history_page.next.pressed.emit()
-	assert(history_page.shown.size() == 6)
+	assert(history_page.shown.size() == 8)
 	assert(history_page.next.disabled)
 	history_page.previous.pressed.emit()
 	assert(history_page.shown.size() == 50)
-	history_page.tag_select.select(2)
-	history_page.refresh()
-	assert(history_page.filtered.size() == 28)
-	assert(history_page.shown[0].tag == "mouse-B")
+	var legacy_group: Dictionary = {}
+	for entry in history_page.filtered:
+		if entry.get("legacy", false):
+			legacy_group = entry
+	history_page.call("_show_group", legacy_group)
+	assert(history_page.radar.values.size() == 1, "legacy radar never fabricates missing tests")
+	assert("Legacy single result" in history_page.detail.text)
+	var zero_group: Dictionary = legacy_group.duplicate(true)
+	zero_group.results[0].samples = [0.0, 0.0, 0.0, 0.0, 0.0]
+	zero_group.results[0].stats = History.summary_stats("tracking", zero_group.results[0].samples)
+	var zero_groups: Array[Dictionary] = [zero_group]
+	chart.set_groups(zero_groups)
+	await process_frame
+	await process_frame
+	assert(chart.bars.size() == 1 and chart.bars[0].rect.size.y == 6.0, "zero-point bars remain hoverable")
+	motion.position = chart.bars[0].rect.get_center()
+	chart.call("_gui_input", motion)
+	assert(history_page.tooltip.visible and "0.0 pts" in history_page.tooltip_label.text)
+	chart.mouse_exited.emit()
+	assert(not history_page.tooltip.visible and chart.hovered_id.is_empty())
+	var empty_groups: Array[Dictionary] = []
+	chart.set_groups(empty_groups)
+	await process_frame
+	await process_frame
+	assert(chart.bars.is_empty() and chart.group_rects.is_empty())
 	app.call("enter_project", "tracking")
 	tracking_state.prepare(Time.get_ticks_usec())
 	app.call("_notification", Node.NOTIFICATION_APPLICATION_FOCUS_OUT)

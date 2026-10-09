@@ -8,11 +8,12 @@ The bundled Maple Mono font is used directly as a Godot resource.
 
 - The application opens fullscreen at a five-test menu. Tests are prominent project-colored
   buttons on the left; History and Settings live in a separate Tools section.
-  The right side shows only each project's best valid, unsaved cached result,
-  its unit/direction and remaining lifetime. There are no menu history sparklines,
-  persistent personal bests or combined score. Result pages have a five-axis
-  0–100 radar for the current result plus other unexpired cached bests; missing
-  tests show -- and are unfilled, rather than a fabricated score.
+  The right side shows each project's latest valid result from this app run,
+  a five-axis 0–100 radar, its raw score and save-window countdown. Saving does
+  not clear the display. Results at least one hour old remain visible with faded
+  rows/titles and radar labels/markers, marked EXPIRED, and cannot be saved.
+  Missing radar axes show -- and are unfilled. Result-page radars use the current
+  result and the latest cached results, including expired display snapshots.
 - The native Godot UI uses the xianii dark palette from Nigh/xianii-theme
   (MIT; attribution in assets/licenses/xianii-theme-LICENSE.txt, included by
   all export presets), converted from
@@ -160,39 +161,47 @@ The bundled Maple Mono font is used directly as a Godot resource.
   Failed settings writes restore the previous in-memory value and scene layout.
 - Completed tests freeze five samples, statistics, sensitivity, UTC timestamp,
   local completion time and UTC offset before the final score animation ends.
-  A ResultCache stores these snapshots only in memory, expiring each exactly one
-  hour after completion using monotonic microseconds, even while another test runs.
-  Time tests prefer lower median; Tracking prefers higher median, including valid 0%.
-  Per-project candidate queues discard older equal/worse results when a newer
-  result dominates them; older better results keep newer worse backups for expiry.
-  The menu refreshes countdowns each second and expired values immediately.
+  A ResultCache stores only the latest valid snapshot per project in memory,
+  replacing it even when the new score is worse. One-hour save eligibility uses
+  monotonic microseconds; expired and saved snapshots stay available for display
+  until replaced or app exit. Valid 0% Tracking results are retained. The menu
+  refreshes countdowns and expiry styling each second.
 - Result pages have Retry/Menu only. `Save Session` and optional 64-character
-  Tag exist only on the menu. All five projects must have unexpired cached results;
-  clicking Save rechecks expiry and atomically saves their current bests as one
-  session. Success clears every cached candidate and the tag; failure retains them
-  for retry only until their original expiry. Cache is never saved on exit or
-  restored on startup. Result pages release the mouse and stop look; retry restores it.
+  Tag exist only on the menu. All five projects must have unexpired, unsaved cached results;
+  clicking Save rechecks expiry and atomically saves the five latest results as
+  one session. Success marks those snapshots saved and clears the tag, without
+  changing the displayed scores/radar. Already saved results cannot be saved again;
+  all five projects need fresh results for another session. Failure retains the
+  results for retry within their original save windows. Cache is never saved on
+  exit or restored on startup. Result pages release the mouse and stop look;
+  retry restores it.
 - History is an atomically replaced `user://history.json`, format version 2,
   with data_epoch 2, sessions and legacy_records. Each session stores id, saved
   timestamp_utc/local_time/utc_offset_minutes, one tag, and exactly one complete
   result for each of the five projects. Each result retains its original completion
   time, five samples, stats, sensitivity, rule_version and Tracking angular errors.
-  A derived flat index serves project filters and charts; group timestamps order
-  session entries/trends, while details show all five bests and the selected test's
-  rounds/completion metadata. Valid epoch-2 format-v1 single results remain explicitly
+  A derived flat index remains available for record lookup and validation;
+  session timestamps order session lists/charts. Session details show all five
+  saved results, while individual rounds/completion metadata live in bar tooltips. Valid epoch-2 format-v1 single results remain explicitly
   labeled legacy records and are preserved when new sessions are saved; they are
   never fabricated into complete sessions. Invalid or future formats cannot overwrite.
-- History supports project/tag/full-session-rule-version filtering, newest-first
-  lists of 50 records per page, and chronological grouped bars for the latest
-  100 matching sessions. The project filter chooses list/detail context; each
-  session's chart group has all five results, colored consistently, on a fixed
-  0–100 y-axis. Bars are 18px wide with 3px internal gaps and larger group gaps;
-  overflow supports horizontal wheel/pan/drag navigation and a position indicator.
-  Clicking a row or bar reveals the full session and the selected test's rounds.
-  Version filtering uses the ordered five-project version tuple; legacy singles
-  have separate project-version choices and only their actual bar, with no fake
-  results. Empty/single/zero/constant-value charts work. Cloud sync, export,
-  editing and deletion are not included.
+- History has no project, tag or rules-version filters. It shows all sessions
+  and explicitly labeled legacy singles, with newest-first lists of 50 entries
+  per page and chronological grouped bars for the latest 100 entries. List rows
+  show local date/time, total points (sum of the five unrounded project scores,
+  displayed to one decimal, out of 500), and tag. Legacy singles show their actual
+  points out of 100, not a fabricated session total. Each session has all five
+  project-colored bars on a fixed 0–100 y-axis. Bars are 18px wide with 3px internal
+  gaps and larger group gaps; overflow supports horizontal wheel/pan/drag navigation
+  and a position indicator. Hover highlights a bar with a border and shows a
+  tooltip with that test's raw/point score, rounds, completion time/UTC offset,
+  sensitivity, tag, rules version, statistics and Tracking angular error. Leaving
+  or scrolling hides the tooltip. Clicking anywhere in a chart group or a list row
+  selects the whole session and shows all test scores, rules versions, sensitivities,
+  session metadata/total and a radar at the lower right. Rules versions appear only
+  in those details and tooltips. Legacy singles have only their actual bar/radar
+  axis. Empty/single/zero/constant-value charts work. Cloud sync, export, editing
+  and deletion are not included.
 - Run `godot --headless --path . --script tests/reaction_state_test.gd`,
   `godot --headless --path . --script tests/sequence_state_test.gd`,
   `godot --headless --path . --script tests/playthrough_test.gd`,

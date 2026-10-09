@@ -59,7 +59,7 @@ func response(valid: bool) -> void:
 
 
 func bind_controls(root: Node) -> void:
-	if root is Control and (root is BaseButton or root is Slider or root is LineEdit or root is ItemList or root.has_signal("record_selected")):
+	if root is Control and (root is BaseButton or root is Slider or root is LineEdit or root is ItemList or root.has_signal("group_selected")):
 		var control := root as Control
 		control.mouse_entered.connect(func() -> void:
 			if control.is_visible_in_tree() and not (control is BaseButton and control.disabled):
