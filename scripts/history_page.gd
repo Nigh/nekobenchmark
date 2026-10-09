@@ -3,19 +3,19 @@ extends Control
 signal back_requested
 const Scores = preload("res://scripts/score_store.gd")
 const Chart = preload("res://scripts/trend_chart.gd")
+const Radar = preload("res://scripts/result_radar.gd")
 const Palette = preload("res://scripts/app_theme.gd")
-const History = preload("res://scripts/history_store.gd")
 var store
-var project_select: OptionButton
-var tag_select: OptionButton
-var version_select: OptionButton
 var chart
+var radar
 var list: ItemList
 var detail: Label
 var heading: Label
 var page_label: Label
 var previous: Button
 var next: Button
+var tooltip: PanelContainer
+var tooltip_label: Label
 var filtered: Array[Dictionary] = []
 var shown: Array[Dictionary] = []
 var page_index := 0
@@ -33,108 +33,74 @@ func setup(history) -> void:
 	_add_label("HISTORY", Vector2(40, 30), Vector2(600, 46), 30)
 	var back := _button("Menu", Vector2(1100, 30), Vector2(140, 44))
 	back.pressed.connect(func() -> void: back_requested.emit())
-	project_select = OptionButton.new()
-	project_select.position = Vector2(40, 96)
-	project_select.size = Vector2(300, 44)
-	for mode in Scores.PROJECTS:
-		project_select.add_item(mode.name)
-	add_child(project_select)
-	project_select.item_selected.connect(func(_index: int) -> void: refresh(true))
-	tag_select = OptionButton.new()
-	tag_select.clip_text = true
-	tag_select.fit_to_longest_item = false
-	tag_select.position = Vector2(360, 96)
-	tag_select.size = Vector2(360, 44)
-	add_child(tag_select)
-	tag_select.item_selected.connect(func(_index: int) -> void: refresh())
-	version_select = OptionButton.new()
-	version_select.position = Vector2(740, 96)
-	version_select.size = Vector2(440, 44)
-	add_child(version_select)
-	version_select.item_selected.connect(func(_index: int) -> void: refresh())
-	heading = _add_label("", Vector2(40, 150), Vector2(1200, 28), 14)
+	heading = _add_label("", Vector2(40, 86), Vector2(1200, 28), 14)
 	chart = Chart.new()
-	chart.position = Vector2(40, 186)
-	chart.size = Vector2(1200, 216)
+	chart.position = Vector2(40, 122)
+	chart.size = Vector2(1200, 250)
 	chart.clip_contents = true
-	chart.record_selected.connect(_show_record)
+	chart.group_selected.connect(_show_group)
+	chart.record_hovered.connect(_show_tooltip)
 	add_child(chart)
 	list = ItemList.new()
-	list.position = Vector2(40, 422)
-	list.size = Vector2(740, 224)
-	list.item_selected.connect(func(index: int) -> void: _show_record(shown[index]))
+	list.add_theme_font_size_override("font_size", 13)
+	list.position = Vector2(40, 394)
+	list.size = Vector2(540, 252)
+	list.item_selected.connect(func(index: int) -> void: _show_group(shown[index]))
 	add_child(list)
-	detail = _add_label("Select a session to see all five tests.", Vector2(810, 422), Vector2(430, 240), 13)
+	detail = _add_label("Select a session to see all five tests.", Vector2(604, 394), Vector2(336, 266), 13)
 	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	radar = Radar.new()
+	radar.position = Vector2(952, 388)
+	radar.size = Vector2(288, 270)
+	radar.caption = "SELECTED SESSION / -- MISSING"
+	add_child(radar)
 	previous = _button("Previous", Vector2(40, 664), Vector2(130, 36))
 	previous.pressed.connect(func() -> void: page_index -= 1; _fill_list())
-	next = _button("Next", Vector2(650, 664), Vector2(130, 36))
+	next = _button("Next", Vector2(450, 664), Vector2(130, 36))
 	next.pressed.connect(func() -> void: page_index += 1; _fill_list())
-	page_label = _add_label("", Vector2(190, 664), Vector2(440, 36), 14)
-	refresh(true)
+	page_label = _add_label("", Vector2(180, 664), Vector2(260, 36), 13)
+	tooltip = PanelContainer.new()
+	tooltip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tooltip.z_index = 10
+	var style: StyleBoxFlat = theme.get_stylebox("panel", "Panel").duplicate()
+	style.content_margin_left = 12
+	style.content_margin_right = 12
+	style.content_margin_top = 10
+	style.content_margin_bottom = 10
+	tooltip.add_theme_stylebox_override("panel", style)
+	tooltip_label = Label.new()
+	tooltip_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tooltip_label.add_theme_font_size_override("font_size", 13)
+	tooltip.add_child(tooltip_label)
+	add_child(tooltip)
+	tooltip.hide()
+	visibility_changed.connect(func() -> void: tooltip.hide())
+	refresh()
 
 
-func refresh(rebuild_filters: bool = false) -> void:
-	var project: String = Scores.PROJECTS[project_select.selected].key
-	if rebuild_filters:
-		tag_select.clear()
-		tag_select.add_item("All tags")
-		tag_select.set_item_metadata(0, "")
-		var tags: Array[String] = []
-		var current_versions: Array[int] = []
-		for mode in Scores.PROJECTS:
-			current_versions.append(History.current_rule_version(mode.key))
-		var versions: Array = [current_versions]
-		for session in store.sessions:
-			var signature := _session_versions(session)
-			if not signature in versions:
-				versions.append(signature)
-		for record in store.records:
-			if record.project == project and not record.tag.is_empty() and not record.tag in tags:
-				tags.append(record.tag)
-		tags.sort()
-		for tag in tags:
-			tag_select.add_item(tag)
-			tag_select.set_item_metadata(tag_select.item_count - 1, tag)
-		version_select.clear()
-		for signature in versions:
-			var labels: Array[String] = []
-			for version in signature:
-				labels.append(str(version))
-			version_select.add_item("Set rules " + "/".join(labels))
-			version_select.set_item_metadata(version_select.item_count - 1, {"versions": signature})
-		var legacy_versions: Array[int] = []
-		for record in store.legacy_records:
-			if record.project == project and not int(record.rule_version) in legacy_versions:
-				legacy_versions.append(int(record.rule_version))
-		legacy_versions.sort()
-		for version in legacy_versions:
-			version_select.add_item("Legacy single / v%d" % version)
-			version_select.set_item_metadata(version_select.item_count - 1, {"legacy": version})
-		version_select.select(0)
-	var selection: Dictionary = version_select.get_selected_metadata()
-	var version: int = selection.legacy if selection.has("legacy") else selection.versions[project_select.selected]
-	filtered.clear()
-	for record in store.filtered(project, tag_select.get_selected_metadata(), version):
-		var session: Dictionary = store.get_session(record)
-		if (selection.has("legacy") and session.is_empty()) or (selection.has("versions") and not session.is_empty() and _session_versions(session) == selection.versions):
-			filtered.append(record)
+func refresh() -> void:
+	filtered.assign(store.sessions.duplicate(true))
+	for record in store.legacy_records:
+		filtered.append({"id": record.id, "timestamp_utc": record.timestamp_utc, "local_time": record.local_time, "utc_offset_minutes": record.utc_offset_minutes, "tag": record.tag, "results": [record], "legacy": true})
+	filtered.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.timestamp_utc < b.timestamp_utc)
 	var groups: Array[Dictionary] = []
-	for record in filtered.slice(maxi(0, filtered.size() - 100)):
-		var session: Dictionary = store.get_session(record).duplicate(true)
-		if session.is_empty():
-			session = {"local_time": record.local_time, "results": [record]}
-		else:
-			for result in session.results:
-				result.session_id = session.id
-				result.session_local_time = session.local_time
-		groups.append(session)
+	groups.assign(filtered.slice(maxi(0, filtered.size() - 100)))
 	chart.set_groups(groups)
-	heading.text = store.error if not store.error.is_empty() else "0–100 points · %d entries · latest 100 groups · drag or scroll horizontally · click a bar for details" % filtered.size()
+	heading.text = store.error if not store.error.is_empty() else "0–100 points · %d sessions · hover for test details · click a group to select · drag or scroll horizontally" % filtered.size()
 	heading.add_theme_color_override("font_color", Palette.ERROR if not store.error.is_empty() else Palette.MUTED)
 	page_index = 0
 	detail.text = "Select a session to see all five tests."
+	var empty: Array[Dictionary] = []
+	radar.set_results(empty)
+	tooltip.hide()
 	_fill_list()
+
+
+static func total_points(group: Dictionary) -> float:
+	var total := 0.0
+	for result in group.results:
+		total += Scores.points(result.project, result.stats.median)
+	return total
 
 
 func _fill_list() -> void:
@@ -143,41 +109,57 @@ func _fill_list() -> void:
 	var newest := filtered.duplicate()
 	newest.reverse()
 	shown.assign(newest.slice(page_index * 50, (page_index + 1) * 50))
-	for record in shown:
-		list.add_item("%s | %s | %s" % [record.get("session_local_time", record.local_time), Scores.display(record.project, record.stats.median), record.tag + ("  [legacy single result]" if not record.has("session_id") else "")])
+	for group in shown:
+		var score := "%.1f / 500" % total_points(group) if not group.get("legacy", false) else "%.1f / 100 [legacy]" % total_points(group)
+		var row := "%s | %s | %s" % [group.local_time, score, group.tag if not group.tag.is_empty() else "--"]
+		list.add_item(row)
+		list.set_item_tooltip(list.item_count - 1, row)
 	previous.disabled = page_index == 0
 	next.disabled = (page_index + 1) * 50 >= filtered.size()
-	page_label.text = "Page %d / %d · %d records" % [page_index + 1, maxi(1, ceili(filtered.size() / 50.0)), filtered.size()]
+	page_label.text = "Page %d / %d · %d entries" % [page_index + 1, maxi(1, ceili(filtered.size() / 50.0)), filtered.size()]
 
 
-func _show_record(record: Dictionary) -> void:
-	var project_name := ""
+func _show_group(group: Dictionary) -> void:
+	var bias := int(group.utc_offset_minutes)
+	detail.text = "%s UTC%s%02d:%02d\nTag: %s\n%s" % [group.local_time, "+" if bias >= 0 else "-", absi(bias) / 60, absi(bias) % 60, group.tag if not group.tag.is_empty() else "--", "Legacy single result" if group.get("legacy", false) else "Total: %.1f / 500" % total_points(group)]
+	for mode in Scores.PROJECTS:
+		for result in group.results:
+			if result.project == mode.key:
+				detail.text += "\n%s: %s\nRules v%d / Sens %.2f" % [mode.name, Scores.display(mode.key, result.stats.median), result.rule_version, result.look_sens]
+	var results: Array[Dictionary] = []
+	results.assign(group.results)
+	radar.set_results(results)
+	chart.selected_id = group.id
+	chart.queue_redraw()
+	for index in shown.size():
+		if shown[index].id == group.id:
+			list.select(index)
+			break
+
+
+func _show_tooltip(record: Dictionary) -> void:
+	if record.is_empty():
+		tooltip.hide()
+		return
+	var name := ""
 	for mode in Scores.PROJECTS:
 		if mode.key == record.project:
-			project_name = mode.name
+			name = mode.name
 	var unit := "%" if record.project == "tracking" else "ms"
 	var rounds: Array[String] = []
 	for sample in record.samples:
 		rounds.append("%.1f" % (float(sample) if record.project == "tracking" else float(sample) / 1000.0))
-	var session: Dictionary = store.get_session(record)
-	var bias: int = int(record.utc_offset_minutes if session.is_empty() else session.utc_offset_minutes)
-	var saved_time: String = record.local_time if session.is_empty() else session.local_time
-	detail.text = "%s  UTC%s%02d:%02d\nTag: %s" % [saved_time, "+" if bias >= 0 else "-", absi(bias) / 60, absi(bias) % 60, record.tag if not record.tag.is_empty() else "--"]
-	if session.is_empty():
-		detail.text += "\nLegacy single result\nMedian: %s" % Scores.display(record.project, record.stats.median)
-	else:
-		for mode in Scores.PROJECTS:
-			for result in session.results:
-				if result.project == mode.key:
-					detail.text += "\n%s: %s" % [mode.name, Scores.display(mode.key, result.stats.median)]
-	detail.text += "\n%s: sens %.2f / v%d\nCompleted: %s\nRounds (%s): %s\nMean: %.1f / Std dev: %.1f %s" % [project_name, record.look_sens, record.rule_version, record.local_time, unit, ", ".join(rounds), record.stats.mean, record.stats.deviation, unit]
+	var bias := int(record.utc_offset_minutes)
+	tooltip_label.text = "%s / %s\nCompleted: %s UTC%s%02d:%02d\nRules v%d / Sens %.2f\nTag: %s\nRounds (%s): %s\nMean: %.1f / Std dev: %.1f %s" % [name, Scores.display(record.project, record.stats.median), record.local_time, "+" if bias >= 0 else "-", absi(bias) / 60, absi(bias) % 60, record.rule_version, record.look_sens, record.tag if not record.tag.is_empty() else "--", unit, ", ".join(rounds), record.stats.mean, record.stats.deviation, unit]
 	if record.project == "tracking":
 		var average := 0.0
 		for degrees in record.errors_degrees:
 			average += float(degrees) / 5.0
-		detail.text += "\nMean angular error: %.2f deg" % average
-	chart.selected_id = record.id
-	chart.queue_redraw()
+		tooltip_label.text += "\nMean angular error: %.2f deg" % average
+	tooltip.size = tooltip.get_combined_minimum_size()
+	var cursor := get_local_mouse_position()
+	tooltip.position = Vector2(clampf(cursor.x + 16, 8, size.x - tooltip.size.x - 8), clampf(cursor.y + 18, 8, size.y - tooltip.size.y - 8))
+	tooltip.show()
 
 
 func _add_label(text: String, position_value: Vector2, size_value: Vector2, font_size: int) -> Label:
@@ -198,12 +180,3 @@ func _button(text: String, position_value: Vector2, size_value: Vector2) -> Butt
 	button.size = size_value
 	add_child(button)
 	return button
-
-
-func _session_versions(session: Dictionary) -> Array[int]:
-	var versions: Array[int] = []
-	for mode in Scores.PROJECTS:
-		for result in session.results:
-			if result.project == mode.key:
-				versions.append(int(result.rule_version))
-	return versions

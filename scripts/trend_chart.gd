@@ -1,6 +1,7 @@
 extends Control
 
-signal record_selected(record: Dictionary)
+signal group_selected(group: Dictionary)
+signal record_hovered(record: Dictionary)
 const Scores = preload("res://scripts/score_store.gd")
 const Palette = preload("res://scripts/app_theme.gd")
 const GROUP_WIDTH := 148.0
@@ -10,13 +11,28 @@ var groups: Array[Dictionary] = []
 var selected_id := ""
 var offset := 0.0
 var bars: Array[Dictionary] = []
+var hovered_id := ""
+var group_rects: Array[Dictionary] = []
 var dragging := false
 var drag_distance := 0.0
 
 
+func _ready() -> void:
+	mouse_exited.connect(_clear_hover)
+
+
+func _clear_hover() -> void:
+	hovered_id = ""
+	record_hovered.emit({})
+	queue_redraw()
+
+
 func set_groups(values: Array[Dictionary]) -> void:
 	groups = values.duplicate()
+	bars.clear()
+	group_rects.clear()
 	selected_id = ""
+	_clear_hover()
 	offset = maximum_offset()
 	queue_redraw()
 
@@ -27,6 +43,7 @@ func maximum_offset() -> float:
 
 func _draw() -> void:
 	bars.clear()
+	group_rects.clear()
 	var font: Font = load("res://assets/MapleMono-Regular.ttf")
 	var area := Rect2(64, 34, size.x - 64, size.y - 66)
 	for index in 5:
@@ -38,13 +55,17 @@ func _draw() -> void:
 		draw_line(Vector2(area.position.x, y), Vector2(area.end.x, y), Palette.BORDER)
 		draw_string(font, Vector2(4, y + 4), str(value), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Palette.MUTED)
 	if groups.is_empty():
-		draw_string(font, Vector2(80, size.y * 0.5), "No saved results for this selection.", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Palette.MUTED)
+		draw_string(font, Vector2(80, size.y * 0.5), "No saved sessions. Complete and save five tests from Menu.", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Palette.MUTED)
 		return
 	for index in groups.size():
 		var x := area.position.x + index * GROUP_WIDTH - offset + 10
 		if x + GROUP_WIDTH < area.position.x or x > area.end.x:
 			continue
 		var group: Dictionary = groups[index]
+		var group_rect := Rect2(x - 10, area.position.y, GROUP_WIDTH, area.size.y).intersection(area)
+		group_rects.append({"rect": group_rect, "group": group})
+		if group.id == selected_id:
+			draw_rect(group_rect, Color(Palette.INK, 0.07))
 		for result in group.results:
 			var column := 0
 			for mode_index in 5:
@@ -57,9 +78,12 @@ func _draw() -> void:
 				draw_line(Vector2(rect.position.x, area.end.y), Vector2(rect.end.x, area.end.y), Palette.PROJECT_COLORS[result.project], 2)
 			if visible_rect.has_area():
 				draw_rect(visible_rect, Palette.PROJECT_COLORS[result.project])
-				if result.id == selected_id:
+				if result.id == hovered_id:
 					draw_rect(visible_rect, Palette.INK, false, 2)
-			bars.append({"rect": Rect2(rect.position.x, area.position.y, BAR_WIDTH, area.size.y).intersection(area), "record": result})
+			var hit_rect := Rect2(rect.position.x, area.end.y - maxf(6.0, rect.size.y), BAR_WIDTH, maxf(6.0, rect.size.y)).intersection(area)
+			if points == 0.0 and result.id == hovered_id:
+				draw_rect(hit_rect, Palette.INK, false, 2)
+			bars.append({"rect": hit_rect, "record": result})
 		if x >= area.position.x and x + 105 < area.end.x:
 			draw_string(font, Vector2(x, area.end.y + 17), group.local_time.substr(5, 11), HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Palette.MUTED)
 	if maximum_offset() > 0.0:
@@ -73,26 +97,36 @@ func _gui_input(event: InputEvent) -> void:
 		if event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_LEFT, MOUSE_BUTTON_WHEEL_DOWN, MOUSE_BUTTON_WHEEL_RIGHT] and event.pressed:
 			var direction := -1 if event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_LEFT] else 1
 			offset = clampf(offset + direction * GROUP_WIDTH, 0, maximum_offset())
-			queue_redraw()
+			_clear_hover()
 			accept_event()
 		elif event.button_index == MOUSE_BUTTON_LEFT:
 			dragging = event.pressed
 			if event.pressed:
 				drag_distance = 0.0
+				_clear_hover()
 			elif drag_distance < 5.0:
-				for bar in bars:
-					if bar.rect.has_point(event.position):
-						selected_id = bar.record.id
-						record_selected.emit(bar.record)
+				for group in group_rects:
+					if group.rect.has_point(event.position):
+						selected_id = group.group.id
+						group_selected.emit(group.group)
 						queue_redraw()
 						break
 			accept_event()
-	elif event is InputEventMouseMotion and dragging:
-		drag_distance += absf(event.relative.x)
-		offset = clampf(offset - event.relative.x, 0, maximum_offset())
-		queue_redraw()
-		accept_event()
+	elif event is InputEventMouseMotion:
+		if dragging:
+			drag_distance += absf(event.relative.x)
+			offset = clampf(offset - event.relative.x, 0, maximum_offset())
+			_clear_hover()
+			accept_event()
+		else:
+			_clear_hover()
+			for bar in bars:
+				if bar.rect.has_point(event.position):
+					hovered_id = bar.record.id
+					record_hovered.emit(bar.record)
+					queue_redraw()
+					break
 	elif event is InputEventPanGesture:
 		offset = clampf(offset + event.delta.x * 30.0, 0, maximum_offset())
-		queue_redraw()
+		_clear_hover()
 		accept_event()
