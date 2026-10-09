@@ -12,6 +12,7 @@ const ACCENT := Color("#7fcfc4")
 const SUCCESS := Color("#7fc08c")
 const WARNING := Color("#eebc4a")
 const ERROR := Color("#fa6863")
+const PROJECT_COLORS := {"color": PRIMARY, "shooter": SECONDARY, "osu": ACCENT, "spheres": WARNING, "tracking": SUCCESS}
 
 
 static func style(color: Color, border: Color = BORDER) -> StyleBoxFlat:

@@ -10,6 +10,7 @@ const Camera3DConfig := preload("res://scripts/camera_3d_config.gd")
 
 func _init() -> void:
 	_test_osu()
+	_test_osu_timeout()
 	_test_sphere()
 	_test_sphere_separation()
 	assert(is_equal_approx(Camera3DConfig.LOOK_SENS_FINE_STEP, 0.01))
@@ -25,7 +26,7 @@ func _test_sphere_separation() -> void:
 	assert(is_equal_approx(SensLabScr.SPHERE_RADIUS, 0.42))
 	assert(is_equal_approx(SphereAimScr.MIN_SEPARATION, min_sep))
 	assert(is_equal_approx(SphereAimScr.HIT_RADIUS_SCALE, 1.1))
-	assert(is_equal_approx(SphereAimScr.GATE_Z, SensLabScr.TARGET_Z))
+	assert(is_equal_approx(SphereAimScr.GATE_Z, -SensLabScr.DISTANCE_DEFAULT))
 	assert(SphereAimScr.MIN_SEPARATION > SphereAimScr.SPHERE_RADIUS * 2.0)
 
 
@@ -110,3 +111,17 @@ func _test_sphere() -> void:
 		state.register_hit(appear + (index + 1) * Sphere.FIRE_COOLDOWN_US)
 	assert(state.stage == Sphere.Stage.NEXT)
 	assert(state.reactions_us == [Sphere.TARGETS * Sphere.FIRE_COOLDOWN_US])
+
+
+func _test_osu_timeout() -> void:
+	for via_hit in [false, true]:
+		var state := Osu.new()
+		state.stage = Osu.Stage.ACTIVE
+		assert(not state.advance(10_000_000), "OSU timeout begins at the first hit")
+		state.hit_next(10_000_000)
+		assert(not state.advance(10_000_000 + Osu.TIMEOUT_US - 1))
+		if via_hit:
+			state.hit_next(10_000_000 + Osu.TIMEOUT_US)
+		else:
+			assert(state.advance(10_000_000 + Osu.TIMEOUT_US))
+		assert(state.stage == Osu.Stage.INVALID and state.reactions_us.is_empty())

@@ -17,16 +17,17 @@ func _ready() -> void:
 	Room.build(self)
 	Config.apply(camera)
 	target = MeshInstance3D.new()
-	var sphere := SphereMesh.new()
-	sphere.radius = State.RADIUS
-	sphere.height = State.RADIUS * 2.0
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Palette.PRIMARY
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	sphere.material = material
-	target.mesh = sphere
+	var quad := QuadMesh.new()
+	quad.size = Vector2.ONE * State.RADIUS * 2.0 * 1.12
+	var material := ShaderMaterial.new()
+	material.shader = preload("res://shaders/tracking_target.gdshader")
+	material.set_shader_parameter("outer_color", Palette.PRIMARY)
+	material.set_shader_parameter("inner_color", Palette.SUCCESS)
+	quad.material = material
+	target.mesh = quad
 	add_child(target)
 	target.position = State.target_position(0, 0.0)
+	target.look_at(camera.global_position, Vector3.UP, true)
 
 
 func set_active(value: bool) -> void:
@@ -46,10 +47,17 @@ func set_look_sensitivity(value: float) -> void:
 
 func move_target(round_index: int, seconds: float) -> void:
 	target.position = State.target_position(round_index, seconds, camera.position.y)
+	target.look_at(camera.global_position, Vector3.UP, true)
 
 
-func covered() -> bool:
-	return State.is_covered(camera.global_position, -camera.global_basis.z, target.global_position)
+func score_weight() -> float:
+	return State.score_weight(camera.global_position, -camera.global_basis.z, target.global_position)
+
+
+func set_feedback(scoring: bool, progress: float) -> void:
+	var material: ShaderMaterial = target.mesh.material
+	material.set_shader_parameter("scoring", scoring)
+	material.set_shader_parameter("progress", clampf(progress, 0.0, 1.0))
 
 
 func error_degrees() -> float:

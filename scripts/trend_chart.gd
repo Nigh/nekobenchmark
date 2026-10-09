@@ -1,74 +1,98 @@
 extends Control
 
 signal record_selected(record: Dictionary)
+const Scores = preload("res://scripts/score_store.gd")
 const Palette = preload("res://scripts/app_theme.gd")
-var records: Array[Dictionary] = []
-var points: PackedVector2Array = []
-var unit := "ms"
-var compact := false
+const GROUP_WIDTH := 148.0
+const BAR_WIDTH := 18.0
+const BAR_GAP := 3.0
+var groups: Array[Dictionary] = []
 var selected_id := ""
+var offset := 0.0
+var bars: Array[Dictionary] = []
+var dragging := false
+var drag_distance := 0.0
 
 
-func set_records(values: Array[Dictionary], tracking: bool = false) -> void:
-	records = values.duplicate()
-	unit = "%" if tracking else "ms"
+func set_groups(values: Array[Dictionary]) -> void:
+	groups = values.duplicate()
 	selected_id = ""
+	offset = maximum_offset()
 	queue_redraw()
 
 
+func maximum_offset() -> float:
+	return maxf(0.0, groups.size() * GROUP_WIDTH - (size.x - 64.0))
+
+
 func _draw() -> void:
-	points.clear()
+	bars.clear()
 	var font: Font = load("res://assets/MapleMono-Regular.ttf")
-	var area := Rect2(8, 8, maxf(1, size.x - 16), maxf(1, size.y - 16)) if compact else Rect2(100, 26, maxf(1, size.x - 124), maxf(1, size.y - 72))
-	if records.is_empty() or (compact and records.size() < 2):
-		draw_string(font, Vector2(12, size.y * 0.55), "NO SAVED TREND" if compact else "No saved results for this selection.", HORIZONTAL_ALIGNMENT_LEFT, -1, 11 if compact else 16, Palette.MUTED)
+	var area := Rect2(64, 34, size.x - 64, size.y - 66)
+	for index in 5:
+		var mode: Dictionary = Scores.PROJECTS[index]
+		draw_rect(Rect2(64 + index * 220, 4, 10, 10), Palette.PROJECT_COLORS[mode.key])
+		draw_string(font, Vector2(80 + index * 220, 15), mode.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Palette.PROJECT_COLORS[mode.key])
+	for value in [0, 20, 40, 60, 80, 100]:
+		var y: float = area.end.y - area.size.y * value / 100.0
+		draw_line(Vector2(area.position.x, y), Vector2(area.end.x, y), Palette.BORDER)
+		draw_string(font, Vector2(4, y + 4), str(value), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Palette.MUTED)
+	if groups.is_empty():
+		draw_string(font, Vector2(80, size.y * 0.5), "No saved results for this selection.", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Palette.MUTED)
 		return
-	var low := float(records[0].stats.median)
-	var high := low
-	for record in records:
-		low = minf(low, record.stats.median)
-		high = maxf(high, record.stats.median)
-	var padding := maxf(1.0, (high - low) * 0.15)
-	low = maxf(0.0, low - padding)
-	high += padding
-	if unit == "%":
-		low = maxf(0.0, low)
-		high = minf(100.0, high)
-	if not compact:
-		for step in 3:
-			var fraction := float(step) / 2.0
-			var y := area.position.y + area.size.y * fraction
-			draw_line(Vector2(area.position.x, y), Vector2(area.end.x, y), Palette.BORDER, 1)
-			draw_string(font, Vector2(4, y + 5), "%.1f %s" % [lerpf(high, low, fraction), unit], HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Palette.MUTED)
-	var first := float(records[0].timestamp_utc)
-	var last := float(records[-1].timestamp_utc)
-	for index in records.size():
-		var fraction := 0.5 if last == first else (float(records[index].timestamp_utc) - first) / (last - first)
-		var y := 1.0 - (float(records[index].stats.median) - low) / maxf(0.0001, high - low)
-		points.append(area.position + Vector2(fraction * area.size.x, y * area.size.y))
-	if points.size() > 1:
-		draw_polyline(points, Palette.ACCENT, 2, true)
-	for index in points.size():
-		draw_circle(points[index], 5 if records[index].id == selected_id else 3, Palette.PRIMARY)
-	if not compact:
-		draw_string(font, Vector2(area.position.x, size.y - 10), records[0].local_time, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Palette.MUTED)
-		var text: String = records[-1].local_time
-		if records.size() > 1:
-			draw_string(font, Vector2(area.end.x - font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x, size.y - 10), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Palette.MUTED)
+	for index in groups.size():
+		var x := area.position.x + index * GROUP_WIDTH - offset + 10
+		if x + GROUP_WIDTH < area.position.x or x > area.end.x:
+			continue
+		var group: Dictionary = groups[index]
+		for result in group.results:
+			var column := 0
+			for mode_index in 5:
+				if Scores.PROJECTS[mode_index].key == result.project:
+					column = mode_index
+			var points := Scores.points(result.project, result.stats.median)
+			var rect := Rect2(x + column * (BAR_WIDTH + BAR_GAP), area.end.y - points / 100.0 * area.size.y, BAR_WIDTH, points / 100.0 * area.size.y)
+			var visible_rect := rect.intersection(area)
+			if points == 0.0 and rect.position.x >= area.position.x and rect.end.x <= area.end.x:
+				draw_line(Vector2(rect.position.x, area.end.y), Vector2(rect.end.x, area.end.y), Palette.PROJECT_COLORS[result.project], 2)
+			if visible_rect.has_area():
+				draw_rect(visible_rect, Palette.PROJECT_COLORS[result.project])
+				if result.id == selected_id:
+					draw_rect(visible_rect, Palette.INK, false, 2)
+			bars.append({"rect": Rect2(rect.position.x, area.position.y, BAR_WIDTH, area.size.y).intersection(area), "record": result})
+		if x >= area.position.x and x + 105 < area.end.x:
+			draw_string(font, Vector2(x, area.end.y + 17), group.local_time.substr(5, 11), HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Palette.MUTED)
+	if maximum_offset() > 0.0:
+		var width := maxf(24, area.size.x * area.size.x / (groups.size() * GROUP_WIDTH))
+		draw_rect(Rect2(area.position.x, size.y - 5, area.size.x, 3), Palette.BORDER)
+		draw_rect(Rect2(area.position.x + (area.size.x - width) * offset / maximum_offset(), size.y - 5, width, 3), Palette.MUTED)
 
 
 func _gui_input(event: InputEvent) -> void:
-	if compact or not event is InputEventMouseButton or not event.pressed or event.button_index != MOUSE_BUTTON_LEFT:
-		return
-	var nearest := -1
-	var distance := 16.0
-	for index in points.size():
-		var candidate: float = event.position.distance_to(points[index])
-		if candidate < distance:
-			distance = candidate
-			nearest = index
-	if nearest >= 0:
-		selected_id = records[nearest].id
+	if event is InputEventMouseButton:
+		if event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_LEFT, MOUSE_BUTTON_WHEEL_DOWN, MOUSE_BUTTON_WHEEL_RIGHT] and event.pressed:
+			var direction := -1 if event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_LEFT] else 1
+			offset = clampf(offset + direction * GROUP_WIDTH, 0, maximum_offset())
+			queue_redraw()
+			accept_event()
+		elif event.button_index == MOUSE_BUTTON_LEFT:
+			dragging = event.pressed
+			if event.pressed:
+				drag_distance = 0.0
+			elif drag_distance < 5.0:
+				for bar in bars:
+					if bar.rect.has_point(event.position):
+						selected_id = bar.record.id
+						record_selected.emit(bar.record)
+						queue_redraw()
+						break
+			accept_event()
+	elif event is InputEventMouseMotion and dragging:
+		drag_distance += absf(event.relative.x)
+		offset = clampf(offset - event.relative.x, 0, maximum_offset())
 		queue_redraw()
-		record_selected.emit(records[nearest])
+		accept_event()
+	elif event is InputEventPanGesture:
+		offset = clampf(offset + event.delta.x * 30.0, 0, maximum_offset())
+		queue_redraw()
 		accept_event()

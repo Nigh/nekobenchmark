@@ -15,6 +15,9 @@ const TrackingState = preload("res://scripts/tracking_state.gd")
 const HistoryStore = preload("res://scripts/history_store.gd")
 const HistoryPage = preload("res://scripts/history_page.gd")
 const TrendChart = preload("res://scripts/trend_chart.gd")
+const ResultCache = preload("res://scripts/result_cache.gd")
+const UIAudio = preload("res://scripts/ui_audio.gd")
+const Radar = preload("res://scripts/result_radar.gd")
 const INK := Palette.INK
 const MUTED := Palette.MUTED
 const ACCENT := Palette.PRIMARY
@@ -60,6 +63,7 @@ var hud_hint: Label
 var hud_dots: Label
 var hud_footer: Label
 var summary_text: Label
+var summary_radar: Control
 var trial_rows: Array[Label] = []
 var live_timer: Label
 var flight_score: Label
@@ -76,7 +80,9 @@ var sens_chrome_tween: Tween
 var sens_chrome_full := false
 var sens_last_adjust_sec := -INF
 var profile_rows: Array[Label] = []
-var profile_charts: Array[Control] = []
+var result_cache = ResultCache.new()
+var last_menu_refresh_us := -1_000_000
+var menu_notice := ""
 var tracking_state = TrackingState.new()
 var history = HistoryStore.new()
 var history_page: Control
@@ -84,10 +90,14 @@ var settings_page: Control
 var settings_value: Label
 var settings_slider: HSlider
 var result_snapshot: Dictionary = {}
-var summary_tag: LineEdit
+var menu_tag: LineEdit
 var save_button: Button
 var save_status: Label
+var audio: Node
+var sens_save_failed := false
+var storage_status: Label
 var summary_time: Label
+var osu_cursor_position := Vector2.ZERO
 
 const SENS_PANEL_ALPHA_DIM := 0.16
 const SENS_PANEL_ALPHA_FULL := 0.72
@@ -98,6 +108,9 @@ func _ready() -> void:
 	rng.randomize()
 	scores.load_scores()
 	history.load_history()
+	audio = UIAudio.new()
+	add_child(audio)
+	sens_lab.set_layout(scores.lab_spacing, scores.lab_distance)
 	var app_theme := Palette.create()
 	for root in [menu, color_reaction, osu_page, summary, trial_list, flight_score_layer, $CanvasLayer/HUD]:
 		root.theme = app_theme
@@ -118,21 +131,27 @@ func _ready() -> void:
 	add_child(history_page)
 	history_page.setup(history)
 	history_page.back_requested.connect(show_menu)
+	audio.bind_controls(self)
 	show_menu()
 
 
 func _process(_delta: float) -> void:
+	var now := Time.get_ticks_usec()
+	var expired := result_cache.prune(now)
 	if page == "sens":
 		_sync_sens_alt_cursor()
 		_update_sens_chrome()
 	if page.is_empty():
+		if expired or now - last_menu_refresh_us >= 1_000_000:
+			_update_best_scores(now)
 		return
 	if summary.visible:
 		return
-	var now := Time.get_ticks_usec()
 	_update_live_trial_time(now)
 	if page == "color" or page == "corner":
 		if state.advance(now):
+			if state.stage == ReactionState.Stage.INVALID:
+				audio.response(false)
 			if page == "corner":
 				if state.stage == ReactionState.Stage.TARGET:
 					corner_watch.begin_target(rng.randi_range(0, 1) == 0)
@@ -149,27 +168,36 @@ func _process(_delta: float) -> void:
 			if sphere_state.stage == SphereState.Stage.AIMING:
 				sphere_aim.spawn_targets()
 			elif sphere_state.stage == SphereState.Stage.INVALID:
+				audio.response(false)
 				sphere_aim.clear_targets()
 			_refresh_project()
 		if sphere_state.stage == SphereState.Stage.SUMMARY:
 			complete_summary()
 	elif page == "osu":
 		if osu_state.advance(now):
-			_spawn_osu_circles()
+			if osu_state.stage == OsuState.Stage.ACTIVE:
+				_spawn_osu_circles()
+			else:
+				_clear_osu_circles()
+				audio.response(false)
 			_refresh_project()
 		if osu_state.stage == OsuState.Stage.SUMMARY:
 			complete_summary()
 
 	elif page == "tracking":
-		var seconds := 0.0
-		if tracking_state.stage == TrackingState.Stage.ACTIVE:
-			seconds = clampf(float(now - tracking_state.start_us) / 1_000_000.0, 0.0, 10.0)
-		tracking.move_target(tracking_state.coverage.size(), seconds)
-		if tracking_state.advance(now, tracking.covered(), tracking.error_degrees()):
+		var preparing: bool = tracking_state.stage == TrackingState.Stage.PREPARING
+		var acquired_before: int = tracking_state.acquired_us
+		tracking.move_target(tracking_state.coverage.size(), tracking_state.movement_seconds(now))
+		if tracking_state.advance(now, tracking.score_weight(), tracking.error_degrees()):
 			var index: int = tracking_state.coverage.size() - 1
-			_show_score_text_flight(index, "%.1f %%" % tracking_state.coverage[index])
+			_show_score_text_flight(index, ScoreStore.display("tracking", tracking_state.coverage[index]))
 			if tracking_state.stage == TrackingState.Stage.PREPARING:
 				tracking.move_target(tracking_state.coverage.size(), 0.0)
+		if preparing and tracking_state.stage == TrackingState.Stage.ACTIVE:
+			audio.play("start")
+		elif preparing and tracking_state.acquired_us > acquired_before:
+			audio.play("slide")
+		tracking.set_feedback(tracking_state.stage == TrackingState.Stage.ACTIVE, tracking_state.acquired_us / 1_000_000.0)
 		_refresh_tracking()
 		if tracking_state.stage == TrackingState.Stage.SUMMARY:
 			complete_summary()
@@ -187,11 +215,15 @@ func _sync_sens_alt_cursor() -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if page == "osu" and (event is InputEventMouseMotion or event is InputEventMouseButton):
+		# Preserve input-event order; polling the cursor can include motion queued after a key press.
+		osu_cursor_position = osu_page.get_global_transform_with_canvas().affine_inverse() * event.position
 	if page != "sens" or not sens_lab.cursor_mode:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		var over := _sens_slider_hit(event.position)
 		if event.pressed and over:
+			audio.play("press")
 			sens_slider_dragging = true
 			_apply_sens_slider_at(event.position.x)
 			get_viewport().set_input_as_handled()
@@ -221,8 +253,6 @@ func _unhandled_input(event: InputEvent) -> void:
 	if page == "sens":
 		_handle_sens_input(event)
 		return
-	if summary.visible and summary_tag.has_focus():
-		return
 	if event.is_action_pressed("restart") and _summary_visible():
 		_restart_project()
 		return
@@ -230,10 +260,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	match page:
 		"tracking":
-			if _reaction_event(event) and tracking_state.stage in [TrackingState.Stage.READY, TrackingState.Stage.INVALID]:
-				tracking_state.reset()
-				_reset_trial_list()
-				tracking_state.prepare(Time.get_ticks_usec())
+			pass
 		"color", "corner":
 			_handle_reaction_input(event)
 		"osu":
@@ -279,6 +306,9 @@ func enter_project(project: String) -> void:
 	result_snapshot.clear()
 	tracking_state.reset()
 	tracking.set_active(page == "tracking")
+	if page == "tracking":
+		tracking_state.prepare(Time.get_ticks_usec())
+		tracking.set_feedback(false, 0.0)
 	settings_page.hide()
 	history_page.hide()
 	state.reset()
@@ -292,6 +322,8 @@ func enter_project(project: String) -> void:
 	trial_list.show()
 	color_reaction.visible = page == "color"
 	osu_page.visible = page == "osu"
+	if page == "osu":
+		osu_cursor_position = osu_page.get_local_mouse_position()
 	corner_watch.set_active(page == "corner")
 	sphere_aim.set_active(page == "spheres")
 	sens_lab.set_active(false)
@@ -339,22 +371,20 @@ func complete_summary() -> void:
 		return
 	var result: Dictionary = result_snapshot.stats
 	var key := _score_key()
-	var current := scores.get_best(key)
-	var is_best: bool = (current < 0.0 or result.median > current) if key == "tracking" else ScoreStore.is_new_best(current, result.median)
-	var saved_best := scores.update(key, result.median) if is_best else true
 	var unit := "%" if key == "tracking" else "ms"
-	summary_text.text = "%s / FIVE-ROUND RESULT\n\n%.1f %s\nMEDIAN %s\n\nMEAN  %.1f %s    STD DEV  %.1f %s" % [_project_name(key), result.median, unit, "COVERAGE" if key == "tracking" else "TIME", result.mean, unit, result.deviation, unit]
+	var radar_results := result_cache.selected(Time.get_ticks_usec())
+	for index in radar_results.size():
+		if radar_results[index].project == key:
+			radar_results[index] = result_snapshot
+	summary_radar.set_results(radar_results)
+	summary_text.add_theme_color_override("font_color", Palette.PROJECT_COLORS[key])
+	summary_text.text = "%s / FIVE-ROUND RESULT\n\n%s\nFROM FIVE-ROUND MEDIAN\n\nMEAN  %.1f %s    STD DEV  %.1f %s" % [_project_name(key), ScoreStore.display(key, result.median), result.mean, unit, result.deviation, unit]
 	if key == "tracking":
 		var average := 0.0
 		for degrees in result_snapshot.errors_degrees:
 			average += degrees / 5.0
 		summary_text.text += "\nMEAN ANGULAR ERROR  %.2f deg" % average
 	summary_time.text = "Completed: %s (local time)" % result_snapshot.local_time
-	summary_tag.clear()
-	save_button.text = "Save Result"
-	save_button.disabled = not history.writable
-	summary_tag.editable = history.writable
-	save_status.text = history.error if not history.writable else ("Best score could not be saved. Retry Save Result." if not saved_best else "Optional tag: device, setup, or form")
 	$CanvasLayer/HUD.hide()
 	corner_watch.active = false
 	sphere_aim.active = false
@@ -370,23 +400,25 @@ func _freeze_result() -> void:
 	var key := _score_key()
 	var samples: Array = tracking_state.coverage if key == "tracking" else _active_samples()
 	if samples.size() == 5:
+		var completed_us := Time.get_ticks_usec()
 		result_snapshot = HistoryStore.snapshot(key, samples, scores.look_sens, tracking_state.errors if key == "tracking" else [])
+		result_cache.add(result_snapshot, completed_us)
+		menu_notice = ""
 
 
-func _save_result() -> void:
-	if history.save_record(result_snapshot, summary_tag.text):
-		save_button.text = "Saved"
-		save_button.disabled = true
-		summary_tag.editable = false
-		save_status.text = "Saved to History"
-		var key := _score_key()
-		var candidate: float = result_snapshot.stats.median
-		var current := scores.get_best(key)
-		if (key == "tracking" and (current < 0.0 or candidate > current)) or (key != "tracking" and ScoreStore.is_new_best(current, candidate)):
-			if not scores.update(key, candidate):
-				save_status.text += " (best score write failed)"
+func _save_session() -> void:
+	if not page.is_empty():
+		return
+	var selected := result_cache.selected(Time.get_ticks_usec())
+	if selected.size() != ScoreStore.PROJECTS.size():
+		menu_notice = "Complete all five tests within one hour before saving."
+	elif history.save_session(selected, menu_tag.text):
+		result_cache.clear()
+		menu_tag.clear()
+		menu_notice = "Session saved. Complete five tests to save another."
 	else:
-		save_status.text = history.error
+		menu_notice = history.error
+	_update_best_scores()
 
 
 func _project_name(key: String) -> String:
@@ -409,12 +441,17 @@ func _handle_reaction_input(event: InputEvent) -> void:
 	if page == "corner" and state.stage == ReactionState.Stage.TARGET:
 		state.respond(now, corner_watch.target_is_visible())
 	else:
-		state.activate(now, rng) if state.stage != ReactionState.Stage.TARGET else state.respond(now)
+		state.respond(now) if state.stage in [ReactionState.Stage.TARGET, ReactionState.Stage.WAITING] else state.activate(now, rng)
+	if state.stage == ReactionState.Stage.WAITING and not state.reactions_us.size() > samples_before:
+		audio.play("start")
+	else:
+		audio.response(state.stage != ReactionState.Stage.INVALID)
 	if state.reactions_us.size() > samples_before:
 		var new_sample_index := state.reactions_us.size() - 1
 		_show_score_flight(new_sample_index, state.reactions_us[new_sample_index])
 	if state.stage == ReactionState.Stage.NEXT:
 		state.start_wait(now, rng)
+		audio.play("start")
 	if page == "corner" and target_was_active and state.stage != ReactionState.Stage.TARGET:
 		corner_watch.defeat_target()
 	_refresh_project()
@@ -425,6 +462,7 @@ func _handle_osu_input(event: InputEvent) -> void:
 	if osu_state.stage == OsuState.Stage.READY or osu_state.stage == OsuState.Stage.INVALID:
 		if _reaction_event(event):
 			_begin_osu_gate()
+			audio.response(true)
 		return
 	var is_click: bool = (
 		(event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT)
@@ -432,22 +470,28 @@ func _handle_osu_input(event: InputEvent) -> void:
 	)
 	if not is_click:
 		return
+	var point := osu_cursor_position
+	if event is InputEventMouseButton:
+		point = osu_page.get_global_transform_with_canvas().affine_inverse() * event.position
 	if osu_state.stage == OsuState.Stage.WAITING:
 		osu_state.early_input()
+		audio.response(false)
 		_clear_osu_circles()
 		_refresh_project()
 		return
 	if osu_state.stage == OsuState.Stage.GATE:
-		if _osu_gate_hit(osu_page.get_local_mouse_position()):
+		var gate_hit := _osu_gate_hit(point)
+		if gate_hit:
 			osu_state.begin_wait(now, rng)
 			_clear_osu_circles()
+		audio.play("start") if gate_hit else audio.response(false)
 		_refresh_project()
 		return
 	if osu_state.stage != OsuState.Stage.ACTIVE:
 		return
 	# Mouse and react keys both require the cursor to be on the next circle.
 	var samples_before: int = osu_state.reactions_us.size()
-	var hit_index: int = _osu_circle_at(osu_page.get_local_mouse_position())
+	var hit_index: int = _osu_circle_at(point)
 	if hit_index + 1 == osu_state.expected:
 		osu_state.hit_next(now)
 		_mark_osu_hit(hit_index)
@@ -456,6 +500,7 @@ func _handle_osu_input(event: InputEvent) -> void:
 	else:
 		osu_state.miss()
 		_clear_osu_circles()
+	audio.response(osu_state.stage != OsuState.Stage.INVALID)
 	if osu_state.reactions_us.size() > samples_before:
 		var new_sample_index: int = osu_state.reactions_us.size() - 1
 		_show_score_flight(new_sample_index, osu_state.reactions_us[new_sample_index])
@@ -478,6 +523,7 @@ func _handle_sphere_input(event: InputEvent) -> void:
 	if sphere_state.stage == SphereState.Stage.READY or sphere_state.stage == SphereState.Stage.INVALID:
 		if _reaction_event(event):
 			_begin_sphere_gate()
+			audio.response(true)
 		return
 	var is_fire: bool = (
 		(event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT)
@@ -489,6 +535,7 @@ func _handle_sphere_input(event: InputEvent) -> void:
 	if not sphere_state.try_fire(now):
 		return
 	if sphere_state.stage == SphereState.Stage.INVALID:
+		audio.response(false)
 		sphere_aim.clear_targets()
 		_refresh_project()
 		return
@@ -497,10 +544,12 @@ func _handle_sphere_input(event: InputEvent) -> void:
 		if hit >= 0:
 			sphere_state.begin_wait(now, rng)
 			sphere_aim.clear_targets()
+		audio.play("start") if hit >= 0 else audio.response(false)
 		_refresh_project()
 		return
 	if hit >= 0:
 		sphere_state.register_hit(now)
+	audio.response(hit >= 0)
 	if sphere_state.reactions_us.size() > samples_before:
 		var new_sample_index: int = sphere_state.reactions_us.size() - 1
 		_show_score_flight(new_sample_index, sphere_state.reactions_us[new_sample_index])
@@ -519,23 +568,26 @@ func _begin_sphere_gate() -> void:
 
 func _handle_sens_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed:
+		var step := Camera3DConfig.LOOK_SENS_FINE_STEP if event.alt_pressed or Input.is_key_pressed(KEY_ALT) else Camera3DConfig.LOOK_SENS_STEP
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			_nudge_look_sensitivity(Camera3DConfig.LOOK_SENS_STEP)
+			_nudge_look_sensitivity(step)
 			get_viewport().set_input_as_handled()
 			return
 		if event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			_nudge_look_sensitivity(-Camera3DConfig.LOOK_SENS_STEP)
+			_nudge_look_sensitivity(-step)
 			get_viewport().set_input_as_handled()
 			return
-	if event is InputEventKey and event.pressed and not event.echo:
+	if event is InputEventKey and event.pressed:
 		if event.keycode == KEY_MINUS or event.keycode == KEY_KP_SUBTRACT:
-			sens_lab.nudge_spacing(-SensLab.SPACING_STEP)
-			_refresh_sens()
+			_adjust_lab_layout(-SensLab.SPACING_STEP * 2.0, 0.0)
 			get_viewport().set_input_as_handled()
 			return
 		if event.keycode == KEY_EQUAL or event.keycode == KEY_KP_ADD:
-			sens_lab.nudge_spacing(SensLab.SPACING_STEP)
-			_refresh_sens()
+			_adjust_lab_layout(SensLab.SPACING_STEP * 2.0, 0.0)
+			get_viewport().set_input_as_handled()
+			return
+		if event.keycode in [KEY_BRACKETLEFT, KEY_BRACKETRIGHT]:
+			_adjust_lab_layout(0.0, -SensLab.DISTANCE_STEP if event.keycode == KEY_BRACKETLEFT else SensLab.DISTANCE_STEP)
 			get_viewport().set_input_as_handled()
 			return
 	if sens_lab.cursor_mode:
@@ -545,8 +597,21 @@ func _handle_sens_input(event: InputEvent) -> void:
 		or _keyboard_react(event)
 	)
 	if is_fire:
-		sens_lab.fire_ray()
+		audio.response(sens_lab.fire_ray() >= 0)
 		_refresh_sens()
+
+
+func _adjust_lab_layout(spacing_delta: float, distance_delta: float) -> void:
+	var previous_spacing := sens_lab.spacing_side()
+	var previous_distance := sens_lab.target_distance
+	sens_lab.set_layout(sens_lab.spacing_side() + spacing_delta, sens_lab.target_distance + distance_delta)
+	sens_save_failed = not scores.set_lab_layout(sens_lab.spacing_side(), sens_lab.target_distance)
+	if sens_save_failed:
+		sens_lab.set_layout(scores.lab_spacing, scores.lab_distance)
+	elif not is_equal_approx(previous_spacing, sens_lab.spacing_side()) or not is_equal_approx(previous_distance, sens_lab.target_distance):
+		audio.play("slide")
+	_note_sens_adjust()
+	_refresh_sens()
 
 
 func _nudge_look_sensitivity(delta: float) -> void:
@@ -555,7 +620,11 @@ func _nudge_look_sensitivity(delta: float) -> void:
 
 
 func _set_look_sensitivity(value: float, sync_slider: bool = true) -> void:
+	var previous := scores.look_sens
 	var saved := scores.set_look_sensitivity(value)
+	sens_save_failed = not saved
+	if saved and not is_equal_approx(previous, scores.look_sens):
+		audio.play("slide")
 	_apply_look_sensitivity()
 	if sync_slider:
 		_sync_sens_slider()
@@ -671,12 +740,12 @@ func _refresh_project() -> void:
 
 func _refresh_sens() -> void:
 	hud_title.text = "3D LOOK SENSITIVITY"
-	hud_hint.text = "SENS  %.2f    SPACING  %.2f" % [scores.look_sens, sens_lab.spacing_side()]
+	hud_hint.text = "SENS  %.2f    SPACING  %.2f    DISTANCE  %.2f%s" % [scores.look_sens, sens_lab.spacing_side(), sens_lab.target_distance, "  (save failed)" if sens_save_failed else ""]
 	hud_dots.text = ""
 	if sens_lab.cursor_mode:
-		hud_footer.text = "DRAG SLIDER  |  WHEEL: SENS  |  -/=: SPACING  |  RELEASE ALT: LOOK  |  ESC: MENU"
+		hud_footer.text = "SLIDER / WHEEL: SENS 0.01  |  -/=: SPACING  |  [/]: DISTANCE  |  RELEASE ALT: LOOK  |  ESC: MENU"
 	else:
-		hud_footer.text = "WHEEL: SENS  |  -/=: SPACING  |  HOLD ALT: CURSOR  |  LMB / REACT KEYS: FIRE  |  ESC: MENU"
+		hud_footer.text = "WHEEL: SENS 0.05  |  -/=: SPACING  |  [/]: DISTANCE  |  ALT: CURSOR  |  LMB / KEYS: FIRE  |  ESC: MENU"
 
 
 func _refresh_color() -> void:
@@ -696,7 +765,7 @@ func _refresh_color() -> void:
 			title = "NEXT TRIAL"
 			hint = "Press when ready."
 		ReactionState.Stage.INVALID:
-			title = "ROUND INVALID"
+			title = "ROUND INVALID / 0.0 pts"
 			hint = "False start or timeout. Press to retry."
 	color_background.color = background
 	var foreground := Palette.SURFACE if state.stage in [ReactionState.Stage.WAITING, ReactionState.Stage.TARGET] else INK
@@ -716,7 +785,7 @@ func _refresh_corner() -> void:
 		title = "NEXT TRIAL"
 		hint = "Click when ready."
 	elif state.stage == ReactionState.Stage.INVALID:
-		title = "ROUND INVALID"
+		title = "ROUND INVALID / 0.0 pts"
 		hint = "False start, miss, or timeout. Click to retry."
 	elif state.stage == ReactionState.Stage.WAITING:
 		title = "WAIT"
@@ -747,7 +816,7 @@ func _refresh_osu() -> void:
 			title = "NEXT TRIAL"
 			hint = "Hit the green gate when ready."
 		OsuState.Stage.INVALID:
-			title = "ROUND INVALID"
+			title = "ROUND INVALID / 0.0 pts"
 			hint = "Early start, miss, or wrong circle. Press to retry."
 	osu_title.text = title
 	osu_hint.text = hint
@@ -772,7 +841,7 @@ func _refresh_spheres() -> void:
 			title = "NEXT TRIAL"
 			hint = "Hit the green gate when ready."
 		SphereState.Stage.INVALID:
-			title = "ROUND INVALID"
+			title = "ROUND INVALID / 0.0 pts"
 			hint = "Early fire or timeout. Click to retry."
 	hud_title.text = title
 	hud_hint.text = hint
@@ -869,7 +938,12 @@ func _build_menu() -> void:
 		var mode: Dictionary = ScoreStore.PROJECTS[index]
 		var button := _button(menu, mode.name, Vector2(40, 128 + index * 76), Vector2(560, 62), enter_project.bind(mode.page))
 		button.add_theme_font_size_override("font_size", 20)
-		button.add_theme_color_override("font_color", ACCENT)
+		for color_name in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+			button.add_theme_color_override(color_name, Palette.PROJECT_COLORS[mode.key])
+		for state_name in ["normal", "hover", "pressed", "focus"]:
+			var style: StyleBoxFlat = button.get_theme_stylebox(state_name).duplicate()
+			style.border_color = Palette.PROJECT_COLORS[mode.key]
+			button.add_theme_stylebox_override(state_name, style)
 		menu_buttons.append(button)
 	var separator := ColorRect.new()
 	separator.position = Vector2(40, 530)
@@ -888,6 +962,12 @@ func _build_menu() -> void:
 	footer.position = Vector2(40, 674)
 	footer.size = Vector2(560, 26)
 	menu.add_child(footer)
+	storage_status = _label("", 13, Palette.ERROR)
+	storage_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	storage_status.position = Vector2(40, 636)
+	storage_status.size = Vector2(560, 36)
+	storage_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	menu.add_child(storage_status)
 	_build_profile_card()
 
 
@@ -897,25 +977,44 @@ func _build_profile_card() -> void:
 	card.size = Vector2(600, 560)
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	menu.add_child(card)
-	var heading := _label("PERSONAL BEST / RECENT TREND", 16, MUTED)
+	var heading := _label("UNSAVED / BEST WITHIN 1 HOUR", 16, MUTED)
 	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	heading.position = Vector2(664, 108)
 	heading.size = Vector2(552, 28)
 	menu.add_child(heading)
 	for index in ScoreStore.PROJECTS.size():
+		var mode: Dictionary = ScoreStore.PROJECTS[index]
+		var title := _label(mode.name, 16, Palette.BASE)
+		title.position = Vector2(664, 150 + index * 90)
+		title.size = Vector2(228, 28)
+		var fill := StyleBoxFlat.new()
+		fill.bg_color = Palette.PROJECT_COLORS[mode.key]
+		title.add_theme_stylebox_override("normal", fill)
+		var bold := FontVariation.new()
+		bold.base_font = load("res://assets/MapleMono-Regular.ttf")
+		bold.variation_embolden = 0.7
+		title.add_theme_font_override("font", bold)
+		menu.add_child(title)
 		var row := _label("", 17, INK)
 		row.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-		row.position = Vector2(664, 150 + index * 90)
-		row.size = Vector2(320, 58)
+		row.position = Vector2(664, 182 + index * 90)
+		row.size = Vector2(552, 28)
 		menu.add_child(row)
 		profile_rows.append(row)
-		var chart := TrendChart.new()
-		chart.compact = true
-		chart.position = Vector2(990, 156 + index * 90)
-		chart.size = Vector2(226, 52)
-		chart.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		menu.add_child(chart)
-		profile_charts.append(chart)
+	menu_tag = LineEdit.new()
+	menu_tag.placeholder_text = "Tag (optional): device, setup, or form"
+	menu_tag.max_length = 64
+	menu_tag.position = Vector2(664, 574)
+	menu_tag.size = Vector2(320, 36)
+	menu.add_child(menu_tag)
+	save_button = _button(menu, "Save Session", Vector2(1004, 574), Vector2(212, 36), _save_session)
+	save_button.add_theme_color_override("font_color", ACCENT)
+	save_status = _label("", 13, MUTED)
+	save_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	save_status.position = Vector2(664, 612)
+	save_status.size = Vector2(552, 34)
+	save_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	menu.add_child(save_status)
 
 
 func _build_color_page() -> void:
@@ -1036,27 +1135,25 @@ func _build_summary() -> void:
 	_add_full_rect(summary, DARK)
 	summary_text = _label("", 22, INK)
 	summary_text.position = Vector2(270, 90)
-	summary_text.size = Vector2(940, 310)
+	summary_text.size = Vector2(600, 310)
+	summary_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	summary_text.add_theme_constant_override("line_spacing", 10)
 	summary.add_child(summary_text)
+	summary_radar = Radar.new()
+	summary_radar.position = Vector2(900, 110)
+	summary_radar.size = Vector2(340, 330)
+	summary.add_child(summary_radar)
 	summary_time = _label("", 14, MUTED)
-	summary_time.position = Vector2(340, 408)
-	summary_time.size = Vector2(800, 30)
+	summary_time.position = Vector2(270, 408)
+	summary_time.size = Vector2(600, 30)
+	summary_time.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	summary.add_child(summary_time)
-	summary_tag = LineEdit.new()
-	summary_tag.placeholder_text = "Tag (optional): device, setup, or form"
-	summary_tag.max_length = 64
-	summary_tag.position = Vector2(440, 460)
-	summary_tag.size = Vector2(600, 46)
-	summary.add_child(summary_tag)
-	save_status = _label("", 14, MUTED)
-	save_status.position = Vector2(300, 518)
-	save_status.size = Vector2(880, 30)
-	summary.add_child(save_status)
-	save_button = _button(summary, "Save Result", Vector2(440, 568), Vector2(240, 48), _save_result)
-	save_button.add_theme_color_override("font_color", ACCENT)
-	_button(summary, "Retry", Vector2(700, 568), Vector2(160, 48), _restart_project)
-	_button(summary, "Menu", Vector2(880, 568), Vector2(160, 48), show_menu)
+	var hint := _label("Added to the 1-hour cache. Save all five tests from Menu.", 14, MUTED)
+	hint.position = Vector2(340, 460)
+	hint.size = Vector2(800, 40)
+	summary.add_child(hint)
+	_button(summary, "Retry", Vector2(560, 568), Vector2(220, 48), _restart_project)
+	_button(summary, "Menu", Vector2(820, 568), Vector2(220, 48), show_menu)
 	var footer := _label("R: RETRY    ESC: MENU", 14, MUTED)
 	footer.position = Vector2(340, 656)
 	footer.size = Vector2(800, 30)
@@ -1073,6 +1170,7 @@ func _update_trial_list_opacity() -> void:
 
 func _build_trial_list() -> void:
 	var background := Panel.new()
+	background.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(Palette.SURFACE, 0.90)
 	style.corner_radius_top_left = 12
@@ -1087,21 +1185,21 @@ func _build_trial_list() -> void:
 	title.position = Vector2(20, 232)
 	title.size = Vector2(220, 24)
 	trial_list.add_child(title)
-	live_timer = _label("", 16, ACCENT)
+	live_timer = _label("", 14, ACCENT)
 	live_timer.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	live_timer.position = Vector2(28, 258)
 	live_timer.size = Vector2(210, 24)
 	live_timer.hide()
 	trial_list.add_child(live_timer)
 	for index in 5:
-		var row := _label("ROUND %d  --" % (index + 1), 14, INK)
+		var row := _label("ROUND %d  --" % (index + 1), 12, INK)
 		row.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 		row.position = Vector2(28, 290 + index * 32)
 		row.size = Vector2(210, 24)
 		trial_list.add_child(row)
 		trial_rows.append(row)
 	flight_score = _label("", 30, ACCENT)
-	flight_score.size = Vector2(220, 48)
+	flight_score.size = Vector2(500, 48)
 	flight_score_layer.add_child(flight_score)
 
 
@@ -1144,7 +1242,7 @@ func _spawn_osu_circles() -> void:
 		var circle := _make_osu_circle(index + 1, osu_centers[index])
 		osu_circles_root.add_child(circle)
 		osu_circle_nodes.append(circle)
-	_refresh_osu_visibility()
+	_refresh_osu_visibility(true)
 
 
 func _try_build_osu_chain(inner: Rect2) -> bool:
@@ -1226,7 +1324,7 @@ func _make_osu_circle(number: int, center: Vector2) -> Control:
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.position = center - Vector2(OSU_RADIUS, OSU_RADIUS)
 	root.size = Vector2(OSU_RADIUS * 2.0, OSU_RADIUS * 2.0)
-	root.ring_color = ACCENT
+	root.ring_color = Palette.PROJECT_COLORS.osu
 	root.fill_color = DARK
 	root.modulate.a = 0.0
 	if number > 0:
@@ -1247,10 +1345,10 @@ func _osu_circle_at(point: Vector2) -> int:
 
 func _osu_circle_is_active(index: int) -> bool:
 	var number := index + 1
-	return number == osu_state.expected or number == osu_state.expected + 1
+	return number >= osu_state.expected and number <= osu_state.expected + 2
 
 
-func _refresh_osu_visibility() -> void:
+func _refresh_osu_visibility(initial: bool = false) -> void:
 	for index in osu_circle_nodes.size():
 		var node := osu_circle_nodes[index]
 		if node == null or not is_instance_valid(node):
@@ -1259,8 +1357,20 @@ func _refresh_osu_visibility() -> void:
 			continue
 		var should_show := osu_state.stage == OsuState.Stage.ACTIVE and _osu_circle_is_active(index)
 		node.visible = should_show
-		if should_show and node.modulate.a < 0.99:
-			node.modulate.a = 1.0
+		if node.has_meta("reveal_tween"):
+			node.get_meta("reveal_tween").kill()
+		if not should_show:
+			continue
+		var offset: int = index + 1 - osu_state.expected
+		var opacity: float = [1.0, 0.6, 0.3][offset]
+		if initial and offset == 0:
+			node.modulate.a = opacity
+		else:
+			var tween := node.create_tween()
+			node.set_meta("reveal_tween", tween)
+			if initial:
+				tween.tween_interval(offset * 0.2)
+			tween.tween_property(node, "modulate:a", opacity, 0.2)
 
 
 func _mark_osu_hit(index: int) -> void:
@@ -1274,12 +1384,11 @@ func _mark_osu_hit(index: int) -> void:
 		var circle: OsuCircleDraw = node
 		circle.ring_color = MUTED
 		circle.queue_redraw()
-	var tween := create_tween()
+	if node.has_meta("reveal_tween"):
+		node.get_meta("reveal_tween").kill()
+	var tween := node.create_tween()
 	tween.tween_property(node, "modulate:a", 0.0, OSU_FADE_SEC)
-	tween.tween_callback(func() -> void:
-		if is_instance_valid(node):
-			node.visible = false
-	)
+	tween.tween_callback(node.hide)
 
 
 func _show_osu_guide_line() -> void:
@@ -1344,36 +1453,49 @@ func _show_score_flight(index: int, reaction_us: int) -> void:
 		live_timer.hide()
 	if _active_samples().size() == 5:
 		_freeze_result()
-	_show_score_text_flight(index, "%.1f ms" % (float(reaction_us) / 1000.0))
+	_show_score_text_flight(index, ScoreStore.display(_score_key(), float(reaction_us) / 1000.0))
 
 
 func _show_score_text_flight(index: int, score_text: String) -> void:
+	var color: Color = Palette.PROJECT_COLORS[_score_key()]
+	flight_score.add_theme_color_override("font_color", color)
+	trial_rows[index].add_theme_color_override("font_color", color)
 	if score_flight:
 		score_flight.kill()
 	score_flight_active = true
 	flight_score_layer.show()
 	flight_score.text = score_text
-	flight_score.position = Vector2(530, 328)
+	flight_score.position = Vector2(440, 328)
 	score_flight = create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN_OUT)
 	score_flight.tween_property(flight_score, "position", Vector2(28, 290 + index * 32), 0.5)
 	score_flight.tween_callback(_finish_score_flight.bind(index, score_text))
 
 
 func _finish_score_flight(index: int, score_text: String) -> void:
-	trial_rows[index].text = "ROUND %d  %s" % [index + 1, score_text]
+	trial_rows[index].text = "%d  %s" % [index + 1, score_text]
 	flight_score_layer.hide()
 	score_flight_active = false
 
 
-func _update_best_scores() -> void:
+func _update_best_scores(now_us: int = -1) -> void:
+	if now_us < 0:
+		now_us = Time.get_ticks_usec()
+	last_menu_refresh_us = now_us
+	result_cache.prune(now_us)
+	storage_status.text = " / ".join([scores.error, history.error]).trim_prefix(" / ").trim_suffix(" / ")
+	var completed := 0
 	for index in ScoreStore.PROJECTS.size():
 		var mode: Dictionary = ScoreStore.PROJECTS[index]
-		var best := scores.get_best(mode.key)
-		var missing: bool = best < 0.0 if mode.key == "tracking" else best == 0.0
-		var value := "--" if missing else "%.1f %s" % [best, "%" if mode.key == "tracking" else "ms"]
-		profile_rows[index].text = "%s\n%s  /  %s" % [mode.name, value, "HIGHER IS BETTER" if mode.key == "tracking" else "LOWER IS BETTER"]
-		var records: Array[Dictionary] = history.filtered(mode.key)
-		profile_charts[index].set_records(records.slice(maxi(0, records.size() - 20)), mode.key == "tracking")
+		var entry: Dictionary = result_cache.best(mode.key)
+		if entry.is_empty():
+			profile_rows[index].text = "--  /  NO VALID UNSAVED RESULT"
+			continue
+		completed += 1
+		var remaining := ceili(float(ResultCache.VALID_US - (now_us - int(entry.completed_us))) / 1_000_000.0)
+		profile_rows[index].text = "%s / %02d:%02d LEFT" % [ScoreStore.display(mode.key, entry.record.stats.median), remaining / 60, remaining % 60]
+	save_button.disabled = completed != ScoreStore.PROJECTS.size() or not history.writable
+	menu_tag.editable = history.writable
+	save_status.text = menu_notice if not menu_notice.is_empty() else "%d / 5 ready. Complete all five within one hour to save." % completed
 
 
 func _label(text: String, font_size: int, color: Color) -> Label:
@@ -1446,6 +1568,9 @@ func show_history() -> void:
 
 
 func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_IN and page == "tracking" and tracking_state.stage == TrackingState.Stage.INVALID:
+		tracking_state.prepare(Time.get_ticks_usec())
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	if what == NOTIFICATION_APPLICATION_FOCUS_OUT and page == "tracking" and tracking_state.stage in [TrackingState.Stage.PREPARING, TrackingState.Stage.ACTIVE]:
 		tracking_state.reset()
 		tracking_state.stage = TrackingState.Stage.INVALID
@@ -1457,20 +1582,19 @@ func _refresh_tracking() -> void:
 	hud_title.text = "3D TRACKING"
 	hud_dots.text = _dots(tracking_state.coverage.size())
 	hud_footer.text = "MOUSE: TRACK WITH CROSSHAIR | NO FIRE REQUIRED | ESC: MENU"
-	var now := Time.get_ticks_usec()
 	live_timer.hide()
 	match tracking_state.stage:
 		TrackingState.Stage.READY:
-			hud_hint.text = "Press a react key or click to begin five 10-second rounds."
+			hud_hint.text = "Follow the target continuously for 1 second to begin."
 		TrackingState.Stage.INVALID:
-			hud_hint.text = "Focus lost. Set cancelled. Press or click to retry."
+			hud_hint.text = "Focus lost. Set cancelled. Return to resume tracking."
 		TrackingState.Stage.PREPARING:
-			hud_hint.text = "PREPARE  %.1f s / Aim at the stationary sphere" % (maxi(0, tracking_state.deadline_us - now) / 1_000_000.0)
+			hud_hint.text = "FOLLOW  %.1f / 1.0 s continuously inside the outer circle" % (tracking_state.acquired_us / 1_000_000.0)
 		TrackingState.Stage.ACTIVE:
 			var elapsed: int = maxi(1, tracking_state.last_us - tracking_state.start_us)
 			var coverage: float = 100.0 * tracking_state.covered_us / elapsed
-			hud_hint.text = "TRACK  %.1f s remaining / %.1f %% covered" % [maxf(0.0, 10.0 - elapsed / 1_000_000.0), coverage]
-			live_timer.text = "LIVE  %.1f s / %.1f %%" % [maxf(0.0, 10.0 - elapsed / 1_000_000.0), coverage]
+			hud_hint.text = "TRACK  %.1f s remaining / %.1f %% coverage / inner 100, outer 50" % [maxf(0.0, 10.0 - elapsed / 1_000_000.0), coverage]
+			live_timer.text = "LIVE %.1f s / %.1f pts" % [maxf(0.0, 10.0 - elapsed / 1_000_000.0), ScoreStore.points("tracking", coverage)]
 			live_timer.show()
 
 

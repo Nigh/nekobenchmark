@@ -7,6 +7,7 @@ const TRIALS := 5
 const TARGETS := 6
 const WAIT_MIN_US := 1_000_000
 const WAIT_MAX_US := 3_000_000
+const TIMEOUT_US := 6_000_000
 
 var stage: Stage = Stage.READY
 var expected := 1
@@ -42,6 +43,9 @@ func begin_wait(now_us: int, rng: RandomNumberGenerator) -> void:
 
 
 func advance(now_us: int) -> bool:
+	if stage == Stage.ACTIVE and expected > 1 and now_us >= start_us + TIMEOUT_US:
+		invalidate()
+		return true
 	if stage == Stage.WAITING and now_us >= deadline_us:
 		expected = 1
 		start_us = 0
@@ -57,6 +61,9 @@ func early_input() -> void:
 
 func hit_next(now_us: int) -> void:
 	if stage != Stage.ACTIVE:
+		return
+	if expected > 1 and now_us >= start_us + TIMEOUT_US:
+		invalidate()
 		return
 	if expected == 1:
 		start_us = now_us

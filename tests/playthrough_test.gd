@@ -3,6 +3,11 @@ extends SceneTree
 const OsuState = preload("res://scripts/osu_state.gd")
 const SphereState = preload("res://scripts/sphere_state.gd")
 const Camera3DConfig = preload("res://scripts/camera_3d_config.gd")
+const Scores = preload("res://scripts/score_store.gd")
+const Lab = preload("res://scripts/sens_lab.gd")
+const History = preload("res://scripts/history_store.gd")
+const Cache = preload("res://scripts/result_cache.gd")
+const Room = preload("res://scripts/practice_room.gd")
 
 
 func _initialize() -> void:
@@ -51,7 +56,82 @@ func _run() -> void:
 	for node in osu_nodes:
 		if node.visible:
 			visible_count += 1
-	assert(visible_count == 2, "osu should show only next two circles")
+	assert(visible_count == 3, "osu should show the next three circles")
+	assert(is_equal_approx(osu_nodes[0].modulate.a, 1.0))
+	assert(osu_nodes[1].modulate.a == 0.0 and osu_nodes[2].modulate.a == 0.0)
+	for index in [1, 2]:
+		var reveal: Tween = osu_nodes[index].get_meta("reveal_tween")
+		reveal.pause()
+		reveal.custom_step(0.3)
+	assert(osu_nodes[1].modulate.a > 0.0 and osu_nodes[1].modulate.a < 0.6)
+	assert(osu_nodes[2].modulate.a == 0.0, "third target waits a further 200ms")
+	for index in [1, 2]:
+		osu_nodes[index].get_meta("reveal_tween").custom_step(0.31)
+	assert(is_equal_approx(osu_nodes[1].modulate.a, 0.6))
+	assert(is_equal_approx(osu_nodes[2].modulate.a, 0.3))
+	osu_state.hit_next(Time.get_ticks_usec())
+	app.call("_mark_osu_hit", 0)
+	app.call("_refresh_osu_visibility")
+	assert(osu_nodes[3].visible and osu_nodes[3].modulate.a == 0.0)
+	for index in [1, 2, 3]:
+		var reveal: Tween = osu_nodes[index].get_meta("reveal_tween")
+		reveal.pause()
+		reveal.custom_step(0.2)
+	assert(is_equal_approx(osu_nodes[1].modulate.a, 1.0))
+	assert(is_equal_approx(osu_nodes[2].modulate.a, 0.6))
+	assert(is_equal_approx(osu_nodes[3].modulate.a, 0.3))
+	# Exercise actual GUI routing: a partly faded current target under the result panel.
+	var click_point := Vector2(100, 330)
+	centers[1] = click_point
+	osu_nodes[1].position = click_point - Vector2.ONE * radius
+	osu_nodes[1].modulate.a = 0.4
+	assert(app.call("_osu_circle_at", click_point) == 1, "alpha does not gate hit testing")
+	await process_frame
+	var move := InputEventMouseMotion.new()
+	move.position = app.get("osu_page").get_global_transform_with_canvas() * click_point
+	move.global_position = move.position
+	get_root().push_input(move, true)
+	var click := InputEventMouseButton.new()
+	click.position = move.position
+	click.global_position = click.position
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	get_root().push_input(click, true)
+	assert(osu_state.expected == 3, "result panel must not swallow clicks on a fading target")
+	click.pressed = false
+	get_root().push_input(click, true)
+	# No intervening frame: motion to center, react press, then immediate motion away.
+	var next_center: Vector2 = centers[2]
+	move.position = app.get("osu_page").get_global_transform_with_canvas() * next_center
+	move.global_position = move.position
+	get_root().push_input(move, true)
+	var fast_key := InputEventKey.new()
+	fast_key.keycode = KEY_SPACE
+	fast_key.pressed = true
+	get_root().push_input(fast_key, true)
+	move.position = app.get("osu_page").get_global_transform_with_canvas() * Vector2(1200, 680)
+	move.global_position = move.position
+	get_root().push_input(move, true)
+	assert(osu_state.stage == OsuState.Stage.ACTIVE and osu_state.expected == 4, "later mouse motion cannot turn a react-key hit into a miss")
+	fast_key.echo = true
+	get_root().push_input(fast_key, true)
+	assert(osu_state.expected == 4, "held react keys do not fire repeatedly")
+	fast_key.echo = false
+	fast_key.pressed = false
+	get_root().push_input(fast_key, true)
+	var fourth_center: Vector2 = centers[3]
+	fast_key.pressed = true
+	get_root().push_input(fast_key, true)
+	move.position = app.get("osu_page").get_global_transform_with_canvas() * fourth_center
+	get_root().push_input(move, true)
+	assert(osu_state.stage == OsuState.Stage.INVALID, "moving onto a target after the key press cannot turn a miss into a hit")
+	fast_key.pressed = false
+	get_root().push_input(fast_key, true)
+	# Leaving during a hit fade must destroy its node-bound tween and callback.
+	app.call("show_menu")
+	await create_timer(0.3).timeout
+	app.call("enter_project", "osu")
+	osu_state.stage = OsuState.Stage.ACTIVE
 	for i in 6:
 		osu_state.call("hit_next", Time.get_ticks_usec() + i * 10_000)
 	assert(int(osu_state.get("stage")) == OsuState.Stage.NEXT, "osu round should finish")
@@ -75,6 +155,7 @@ func _run() -> void:
 	_press_key(KEY_SPACE)
 	await process_frame
 	assert(int(sphere_state.get("stage")) == SphereState.Stage.WAITING, "gate hit should start wait")
+	assert(app.get("audio").last_kind == "start")
 	sphere_state.set("deadline_us", Time.get_ticks_usec())
 	await process_frame
 	await process_frame
@@ -109,7 +190,7 @@ func _run() -> void:
 	assert(sens_bodies.size() == 4, "expected 4 sens-lab spheres")
 	assert(app.get("sens_slider_layer").visible, "sens slider should stay visible")
 	var before: float = float(sens_lab.call("spacing_side"))
-	sens_lab.call("nudge_spacing", 0.16)
+	app.call("_adjust_lab_layout", 0.32, 0.0)
 	assert(float(sens_lab.call("spacing_side")) >= before - 0.001)
 	var scores = app.get("scores")
 	var sens_before: float = float(scores.get("look_sens"))
@@ -119,6 +200,56 @@ func _run() -> void:
 	app.call("_apply_sens_slider_at", 330.0 + 310.0)
 	var dragged: float = float(scores.get("look_sens"))
 	assert(is_equal_approx(dragged, snappedf(dragged, Camera3DConfig.LOOK_SENS_FINE_STEP)))
+	var wheel := InputEventMouseButton.new()
+	wheel.button_index = MOUSE_BUTTON_WHEEL_UP
+	wheel.pressed = true
+	wheel.alt_pressed = true
+	var wheel_before: float = scores.look_sens
+	app.call("_handle_sens_input", wheel)
+	assert(is_equal_approx(scores.look_sens, wheel_before + 0.01))
+	wheel.alt_pressed = false
+	app.call("_handle_sens_input", wheel)
+	assert(is_equal_approx(scores.look_sens, wheel_before + 0.06))
+	var held := InputEventKey.new()
+	held.pressed = true
+	held.echo = true
+	held.keycode = KEY_EQUAL
+	var held_before: float = sens_lab.spacing_side()
+	app.call("_handle_sens_input", held)
+	app.call("_handle_sens_input", held)
+	assert(is_equal_approx(sens_lab.spacing_side(), held_before + Lab.SPACING_STEP * 4.0))
+	held.keycode = KEY_BRACKETRIGHT
+	app.call("_handle_sens_input", held)
+	app.call("_handle_sens_input", held)
+	assert(sens_lab.target_distance == 8.5)
+	for body in sens_lab.target_bodies:
+		assert(body.position.z == -8.5)
+	for distance in [3.0, 8.0, 20.0]:
+		sens_lab.set_layout(100.0, distance)
+		var lab_camera: Camera3D = sens_lab.camera
+		for body in sens_lab.target_bodies:
+			assert(Room.contains_point(body.position, Lab.SPHERE_RADIUS - 0.0001))
+			var offset: Vector3 = body.position - lab_camera.position
+			assert(Vector2(offset.x, offset.y).length() + Lab.SPHERE_RADIUS <= distance + 0.0001)
+		assert(sens_lab.spacing_side() >= Lab.SPHERE_RADIUS * 2.0)
+	sens_lab.set_layout(scores.lab_spacing, scores.lab_distance)
+	var reloaded := Scores.new()
+	reloaded.score_path = scores.score_path
+	reloaded.load_scores()
+	assert(is_equal_approx(reloaded.look_sens, scores.look_sens))
+	assert(is_equal_approx(reloaded.lab_spacing, sens_lab.spacing_side()))
+	assert(reloaded.lab_distance == sens_lab.target_distance)
+	app.call("show_menu")
+	app.call("enter_sens_lab")
+	assert(is_equal_approx(sens_lab.spacing_side(), reloaded.lab_spacing))
+	assert(sens_lab.target_distance == reloaded.lab_distance)
+	var real_test_path: String = scores.score_path
+	scores.score_path = test_prefix + "/missing/scores.txt"
+	app.call("_adjust_lab_layout", 0.16, 0.25)
+	assert(app.get("sens_save_failed"))
+	assert(is_equal_approx(sens_lab.spacing_side(), reloaded.lab_spacing))
+	assert(sens_lab.target_distance == reloaded.lab_distance)
+	scores.score_path = real_test_path
 
 	for i in 4:
 		sens_lab.call("_defeat", i)
@@ -126,16 +257,70 @@ func _run() -> void:
 	sens_lab.call("spawn_gate")
 	assert(bool(sens_lab.get("gate_active")))
 	assert(sens_lab.get("target_bodies").size() == 1)
+	app.call("_adjust_lab_layout", 0.0, 0.25)
+	assert(sens_lab.target_bodies[0].position.z == -sens_lab.target_distance)
 	sens_lab.call("_defeat", 0)
 	sens_lab.call("spawn_targets")
 	assert(sens_lab.get("target_bodies").size() == 4, "sens-lab should respawn 4 after gate")
 	assert(not bool(sens_lab.get("gate_active")))
+	var audio = app.get("audio")
+	assert(audio.streams.success.data.size() == int(44100 * 0.022) * 2)
+	assert(audio.streams.error.data.size() == int(44100 * 0.035) * 2)
+	assert(audio.streams.start.data.size() == int(44100 * 0.045) * 4)
+	var count_before: int = audio.play_count
+	audio.last_slide_us = -100_000
+	audio.play("slide")
+	audio.play("slide")
+	assert(audio.play_count == count_before + 1)
+	app.call("_set_look_sensitivity", scores.look_sens)
+	assert(audio.play_count == count_before + 1, "unchanged slider values stay silent")
+	held.keycode = KEY_SPACE
+	app.call("_handle_sens_input", held)
+	assert(audio.play_count == count_before + 1, "react key echoes stay silent")
+	app.call("enter_project", "color")
+	var react := InputEventKey.new()
+	react.keycode = KEY_SPACE
+	react.pressed = true
+	app.call("_handle_reaction_input", react)
+	assert(audio.last_kind == "start")
+	app.call("_handle_reaction_input", react)
+	assert(audio.last_kind == "error", "false start plays an error")
+	assert(app.get("state").stage == app.get("ReactionState").Stage.INVALID)
+	app.get("state").stage = app.get("ReactionState").Stage.TARGET
+	app.get("state").target_frame_us = Time.get_ticks_usec() - 100_000
+	app.call("_handle_reaction_input", react)
+	assert(audio.last_kind == "start" and app.get("state").reactions_us.size() == 1)
+	app.call("enter_project", "spheres")
+	app.call("_handle_sphere_input", react)
+	assert(audio.last_kind == "success")
+	app.get("sphere_aim").camera.rotation = Vector3(0, PI * 0.5, 0)
+	app.call("_handle_sphere_input", react)
+	assert(audio.last_kind == "error" and app.get("sphere_state").stage == app.get("SphereState").Stage.GATE)
+	count_before = audio.play_count
+	app.call("_handle_sphere_input", react)
+	assert(audio.play_count == count_before, "cooldown inputs stay silent")
+	app.get("sphere_state").stage = app.get("SphereState").Stage.WAITING
+	app.call("_handle_sphere_input", react)
+	assert(audio.last_kind == "error")
+	app.call("enter_project", "osu")
+	app.call("_handle_osu_input", react)
+	assert(audio.last_kind == "success")
+	app.get("osu_state").stage = app.get("OsuState").Stage.WAITING
+	app.call("_handle_osu_input", react)
+	assert(audio.last_kind == "error")
 
 	app.call("show_menu")
 	await process_frame
 	assert(app.get("profile_rows").size() == 5, "overview should list five bests")
-	assert(app.get("profile_charts").size() == 5, "overview should have five trends")
 	assert(app.get("menu_buttons").size() == 5)
+	for index in 5:
+		var expected_color: Color = app.get("Palette").PROJECT_COLORS[Scores.PROJECTS[index].key]
+		assert(app.get("menu_buttons")[index].get_theme_stylebox("normal").border_color == expected_color)
+	audio.last_hover_us = -100_000
+	app.get("menu_buttons")[0].mouse_entered.emit()
+	assert(audio.last_kind == "hover")
+	app.get("menu_buttons")[0].button_down.emit()
+	assert(audio.last_kind == "press")
 	app.call("show_settings")
 	assert(app.get("settings_page").visible)
 	assert(not app.get("menu").visible)
@@ -147,42 +332,152 @@ func _run() -> void:
 	assert(app.get("tracking").active)
 	var tracking_state = app.get("tracking_state")
 	const TrackingState = preload("res://scripts/tracking_state.gd")
+	assert(tracking_state.stage == TrackingState.Stage.PREPARING, "Tracking starts without a key")
+	var target_material: ShaderMaterial = app.get("tracking").target.mesh.material
+	assert(not target_material.get_shader_parameter("scoring"))
+	tracking_state.last_us = Time.get_ticks_usec() - 500_000
+	tracking_state.was_covered = true
+	app.get("tracking").move_target(0, tracking_state.movement_seconds(Time.get_ticks_usec()))
+	app.get("tracking").camera.look_at(app.get("tracking").target.global_position)
+	audio.last_slide_us = -100_000
+	app.call("_process", 0.0)
+	assert(tracking_state.stage == TrackingState.Stage.PREPARING and audio.last_kind == "slide")
+	tracking_state.motion_start_us = Time.get_ticks_usec() - 1_000_000
+	tracking_state.last_us = Time.get_ticks_usec() - 1_000_000
+	tracking_state.was_covered = true
+	app.get("tracking").move_target(0, tracking_state.movement_seconds(Time.get_ticks_usec()))
+	app.get("tracking").camera.look_at(app.get("tracking").target.global_position)
+	var play_count: int = app.get("audio").play_count
+	app.call("_process", 0.0)
+	assert(tracking_state.stage == TrackingState.Stage.ACTIVE)
+	assert(target_material.get_shader_parameter("scoring"))
+	assert(app.get("audio").play_count == play_count + 1)
+	assert(app.get("audio").last_kind == "start")
+	app.call("_process", 0.0)
+	assert(app.get("audio").play_count == play_count + 1)
 	tracking_state.coverage.assign([20.0, 40.0, 60.0, 80.0, 100.0])
 	tracking_state.errors.assign([5.0, 4.0, 3.0, 2.0, 1.0])
 	tracking_state.stage = TrackingState.Stage.SUMMARY
 	app.call("complete_summary")
 	assert(app.get("summary").visible)
+	assert(is_equal_approx(app.get("summary_radar").values.tracking, Scores.points("tracking", 60.0)))
 	assert(Input.mouse_mode == Input.MOUSE_MODE_VISIBLE)
 	assert(not app.get("tracking").active)
 	assert(app.get("result_snapshot").samples == [20.0, 40.0, 60.0, 80.0, 100.0])
-	app.get("summary_tag").text = "mouse-A"
-	app.get("summary_tag").grab_focus()
-	var retry := InputEventKey.new()
-	retry.keycode = KEY_R
-	retry.pressed = true
-	app.call("_unhandled_input", retry)
-	assert(app.get("summary").visible, "typing R in the tag must not restart")
-	app.call("_save_result")
+	var cache = app.get("result_cache")
+	assert(cache.best("tracking").record.stats.median == 60.0)
+	app.call("_save_session")
+	assert(app.get("history").sessions.is_empty(), "save is only allowed on the menu")
+	app.call("show_menu")
+	assert(app.get("save_button").disabled, "partial sessions cannot be saved")
+	app.call("_save_session")
+	assert(app.get("history").sessions.is_empty())
+	var settings_before := FileAccess.get_file_as_string(scores.score_path)
+	for mode in Scores.PROJECTS:
+		if mode.key == "tracking":
+			continue
+		app.call("enter_project", mode.page)
+		var completed_state = app.get("osu_state") if mode.key == "osu" else app.get("sphere_state") if mode.key == "spheres" else app.get("state")
+		completed_state.reactions_us.assign([100000, 200000, 300000, 400000, 500000])
+		completed_state.stage = app.get("OsuState").Stage.SUMMARY if mode.key == "osu" else app.get("SphereState").Stage.SUMMARY if mode.key == "spheres" else app.get("ReactionState").Stage.SUMMARY
+		app.call("complete_summary")
+		assert(app.get("summary").visible)
+	app.call("show_menu")
+	assert(cache.selected(Time.get_ticks_usec()).size() == 5)
+	assert(not app.get("save_button").disabled)
+	assert(FileAccess.get_file_as_string(scores.score_path) == settings_before, "finishing tests never writes scores")
+	var tracking_backup: Dictionary = cache.best("tracking").record.duplicate(true)
+	app.call("enter_project", "color")
+	cache.candidates.tracking[0].completed_us = Time.get_ticks_usec() - Cache.VALID_US
+	app.call("_process", 0.0)
+	assert(cache.best("tracking").is_empty(), "cache expires while another test is open")
+	cache.add(tracking_backup, Time.get_ticks_usec())
+	app.call("show_menu")
+	cache.candidates.color[0].completed_us = Time.get_ticks_usec() - Cache.VALID_US
+	app.call("_update_best_scores")
 	assert(app.get("save_button").disabled)
-	assert(app.get("history").records.size() == 1)
-	app.call("_save_result")
-	assert(app.get("history").records.size() == 1, "duplicate save must not append")
+	assert("NO VALID UNSAVED RESULT" in app.get("profile_rows")[0].text)
+	app.call("_save_session")
+	assert(app.get("history").sessions.is_empty(), "expiry is rechecked before saving")
+	cache.add(History.snapshot("color", [100000, 200000, 300000, 400000, 500000], scores.look_sens), Time.get_ticks_usec())
+	app.call("_update_best_scores")
+	app.get("menu_tag").text = "mouse-A"
+	app.get("menu_tag").grab_focus()
+	count_before = audio.play_count
+	app.call("_unhandled_input", react)
+	assert(audio.play_count == count_before, "menu tag typing cannot trigger gameplay audio")
+	var history_store = app.get("history")
+	var history_path: String = history_store.path
+	history_store.path = test_prefix + "/missing/history.json"
+	app.call("_save_session")
+	assert(history_store.sessions.is_empty() and cache.selected(Time.get_ticks_usec()).size() == 5)
+	assert(not app.get("save_button").disabled and app.get("menu_tag").text == "mouse-A")
+	history_store.path = history_path
+	app.call("_save_session")
+	assert(app.get("save_button").disabled)
+	assert(history_store.sessions.size() == 1 and history_store.records.size() == 5)
+	assert(cache.selected(Time.get_ticks_usec()).is_empty())
+	assert(app.get("menu_tag").text.is_empty())
+	for row in app.get("profile_rows"):
+		assert("NO VALID UNSAVED RESULT" in row.text, "saved scores never remain on the menu")
+	app.call("_save_session")
+	assert(history_store.sessions.size() == 1, "duplicate save must not append")
 	app.call("show_history")
 	var history_page = app.get("history_page")
 	history_page.project_select.select(4)
 	history_page.refresh(true)
 	assert(history_page.shown.size() == 1)
+	assert(history_page.chart.groups.size() == 1 and history_page.chart.groups[0].results.size() == 5)
 	assert(history_page.shown[0].tag == "mouse-A")
 	history_page.call("_show_record", history_page.shown[0])
 	assert("60.0 %" in history_page.detail.text)
+	assert("2D REACTION:" in history_page.detail.text and "3D AIM:" in history_page.detail.text)
+	assert(history_page.shown[0].session_id == history_store.sessions[0].id)
 	for index in 55:
-		var record: Dictionary = app.get("history").records[0].duplicate(true)
-		record.id += "-%d" % index
-		record.timestamp_utc += index + 1
-		record.tag = "mouse-B" if index % 2 == 0 else "mouse-A"
-		app.get("history").records.append(record)
+		var session: Dictionary = history_store.sessions[0].duplicate(true)
+		session.id += "-%d" % index
+		session.timestamp_utc += index + 1
+		session.local_time = Time.get_datetime_string_from_unix_time(int(session.timestamp_utc) + int(session.utc_offset_minutes) * 60, true)
+		session.tag = "mouse-B" if index % 2 == 0 else "mouse-A"
+		for result in session.results:
+			result.id += "-%d" % index
+			result.tag = session.tag
+		assert(History.valid_session(session))
+		history_store.sessions.append(session)
+		history_store.call("_index_session", session)
+	var older_session: Dictionary = history_store.sessions[0].duplicate(true)
+	older_session.id += "-old-rules"
+	for result in older_session.results:
+		result.id += "-old-rules"
+		if result.project == "osu":
+			result.rule_version = 2
+	history_store.sessions.append(older_session)
+	history_store.call("_index_session", older_session)
+	var legacy_record: Dictionary = History.snapshot("tracking", [10.0, 10.0, 10.0, 10.0, 10.0], 1.0, [0, 0, 0, 0, 0])
+	history_store.legacy_records.append(legacy_record)
+	history_store.records.append(legacy_record)
 	history_page.refresh(true)
+	assert(history_page.filtered.size() == 56, "group filter isolates every project's rules")
+	history_page.version_select.select(1)
+	history_page.refresh()
+	assert(history_page.filtered.size() == 1 and history_page.chart.groups[0].results.size() == 5)
+	history_page.version_select.select(2)
+	history_page.refresh()
+	assert(history_page.filtered.size() == 1 and history_page.chart.groups[0].results.size() == 1, "legacy chart never fabricates other tests")
+	history_page.version_select.select(0)
+	history_page.refresh()
 	assert(history_page.shown.size() == 50)
+	assert(history_page.chart.groups.size() == 56)
+	var chart = history_page.chart
+	assert(chart.maximum_offset() > 0.0 and chart.offset == chart.maximum_offset())
+	var scroll := InputEventMouseButton.new()
+	scroll.button_index = MOUSE_BUTTON_WHEEL_UP
+	scroll.pressed = true
+	chart.call("_gui_input", scroll)
+	assert(chart.offset < chart.maximum_offset())
+	var other_result: Dictionary = chart.groups[0].results[0]
+	chart.record_selected.emit(other_result)
+	assert("2D REACTION: sens" in history_page.detail.text)
 	assert(not history_page.next.disabled)
 	history_page.next.pressed.emit()
 	assert(history_page.shown.size() == 6)
@@ -199,6 +494,8 @@ func _run() -> void:
 	assert(tracking_state.stage == TrackingState.Stage.INVALID)
 	assert(tracking_state.coverage.is_empty())
 	assert(app.get("result_snapshot").is_empty())
+	app.call("_notification", Node.NOTIFICATION_APPLICATION_FOCUS_IN)
+	assert(tracking_state.stage == TrackingState.Stage.PREPARING)
 
 	app.call("enter_project", "corner")
 	app.get("state").reactions_us.assign([100000, 200000, 300000, 400000, 500000])
@@ -217,6 +514,12 @@ func _run() -> void:
 	app.call("show_menu")
 	DirAccess.remove_absolute(test_prefix + "-scores.txt")
 	DirAccess.remove_absolute(test_prefix + "-history.json")
+	audio.player.stop()
+	# Let the audio mixer release stopped voices before scene shutdown.
+	await create_timer(0.2).timeout
+	app.queue_free()
+	await process_frame
+	await process_frame
 	print("playthrough_test: PASS")
 	quit()
 
