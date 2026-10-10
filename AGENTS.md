@@ -230,7 +230,8 @@ The bundled Maple Mono font is used directly as a Godot resource.
   and non-.NET export templates. Pull requests build and package all three
   platforms without publishing; v* tags or manual dispatch publish releases.
   Packages include all export files (including standalone .pck resources),
-  and Python's zipfile creates archives on every runner.
+  and Python's zipfile creates archives on every runner. The macOS export
+  explicitly targets x86_64 to match its runner and release asset.
 
 ## Maintenance rule
 
