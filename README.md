@@ -1,138 +1,116 @@
-# NekoBenchmark
+<h1 align="center">SyncRateBench</h1>
 
-一个本地运行的 Godot 4 反应速度测试工具，支持 Windows、Linux 和 macOS。程序以全屏项目菜单启动。
+<p align="center">
+  English | <a href="README_ZH.md">中文</a>
+</p>
 
-## 使用
+A local reaction, aiming and tracking benchmark built with Godot 4 for Windows, Linux and macOS. It measures the combined response of you and your computer.
 
-从 GitHub Releases 下载与你的系统对应的导出包并运行。界面仅提供英文。
+## Getting started
 
-- 菜单：左侧选择五个测试，底部 Tools 单独提供 History / Settings；`Esc` 退出。右侧仅显示最近一小时内尚未保存的最佳成绩、优劣方向和剩余有效时间。五项齐全后可填写标签并点 `Save Session` 一次保存整组。
-- 测试内：`Esc` 返回菜单；结果页只显示本项五轮成绩，并提供重试和返回菜单；按 `R` 或按钮重试。
-- 2D Reaction：`Space`、`Z`、`X`、方向键或鼠标左键开始和作答。
-- 3D Reaction：鼠标在 180° 水平范围内观察；敌人在视野内时用鼠标左键作答。
-- OSU：先点中心绿门，等待 1–3 秒后出现编号圆；光标在下一目标（或绿门）上时，左键或反应键才计数。
-- 3D Aim：先打中心绿门，等待 1–3 秒后同时出现六球；准星射线命中后用左键或反应键开火。
-- 3D Tracking：五轮各计分 10 秒；进入即自动低速循环移动，每轮先连续跟住移动大圆 1 秒，再自动开始计分。内圆满分、外环半分；只需鼠标转向，无需开火。
-- Settings：调整共享 3D 灵敏度，或通过 `Open Sens Lab` 进入无计分练习；滚轮调灵敏度，`-` / `=` 调四球间距，`[` / `]` 调距离，两组快捷键均可长按；按住 `Alt` 拖滑条或用滚轮精调。
-- 所有项目新增 0–100 分，显示一位小数，并保留原始 ms / 加权跟踪率；整项分数由五轮原始中位数换算，缓存仍按未舍入的原始成绩选最佳。历史保存原始样本、显示时换算分数，趋势图分数越高越好；不同规则版本不会混画。超时或其他失效仍作废整套，显示 0.0 分，不进入缓存。
+Download your platform's package from [Releases](https://github.com/Nigh/SyncRateBench/releases), extract the complete package and launch the application. Keep the bundled resources alongside the executable. The application opens fullscreen; its interface is English-only.
 
-- Reaction：50 ms＝100，220 ms＝80，1000 ms 超时＝0。
-- OSU：500 ms＝100，1800 ms＝70，首击后 6000 ms 超时＝0。
-- 3D Aim：2400 ms＝60，6000 ms 超时＝0，公式为 `clamp(60 × ln(6000/t) / ln(6000/2400), 0, 100)`。
-- Tracking：0%＝0，30%＝60，100%＝100；`c≤30` 时 `60×ln(1+c)/ln(31)`，其后 `60+40×ln(c/30)/ln(100/30)`。
+- Select a test from the left side of the menu. `History` and `Settings` are in the Tools section.
+- Press `Esc` to return to the menu from a test, or quit from the menu. On a result page, press `R` or click `Retry` to try again.
+- Reaction keys are `Space`, `Z`, `X` and the arrow keys. The left mouse button also responds or fires.
+- Complete all five tests, optionally enter a tag, then click `Save Session` on the menu to save the whole session.
 
-Reaction 与 OSU 在上述锚点之间按时间的对数线性插值，区间外限制为 0–100 分。
+## Tests
 
-所有 3D 模式共用有界练习房（地面延伸到脚下）；墙面/地面为低对比线描网格并随距离淡化。
-
-2D Reaction 与 3D Reaction 连续测量 5 次，随机等待 1–4 秒，目标出现后 1 秒未输入即超时；提前输入或超时会作废整轮并清空样本。OSU 与 3D Aim 各为 5 轮，作废条件见下方专节。完成后显示中位数、平均值和样本标准差。
-
-所有 3D 模式共用同一套相机参数，水平 FOV 103°（`KEEP_WIDTH`，16:9 下约垂直 70.5°），以便视角舒适、跟手。
-
-每个完成成绩在内存中保留一小时，从该成绩完成时独立计时，按单调时钟判定。时间类取最低中位数，追踪取最高加权得分中位数；追踪的 0% 是有效成绩。旧最佳值过期后，自动显示仍有效的后备成绩；例如每隔十分钟完成“优、差、良”，优过期后显示良，直到良过期。“更旧且不更好”的成绩会被剔除，等分保留更新的一次。
-
-未保存缓存退出即丢弃，不会写入磁盘。`user://scores.txt` 只保存共享灵敏度、Lab 间距和距离。五项都有有效成绩时，主界面才能保存整组到 `user://history.json`；保存成功后清空全部缓存，下一组从头开始。保存失败保留缓存供重试，但不会延长有效期。
-
-有效的旧 `data_epoch 2` 单项历史保留为旧记录，新历史使用格式 v2 保存整组；不会把旧单项伪装成完整测试。更早的无代次文件仍按此前更新规则清空旧成绩和历史，保留灵敏度。损坏、无法读取或未知格式文件不会覆盖；清理失败会提示并阻止写入，重启可重试。
-
-## 测试项目
+Each test has five rounds. Result pages show individual rounds, median, mean and sample standard deviation, plus a radar comparing the current result with the latest results from the other tests.
 
 ### 2D Reaction
 
-连续 5 次颜色变化试次。随机等待 1–4 秒后变色，须在 1 秒内用反应键或鼠标左键作答。提前输入或超时作废整轮。`Space`、`Z`、`X`、方向键与鼠标左键均可响应。
+Respond to a color change using a reaction key or the left mouse button. Each trial has a random 1–4 second wait and a one-second response window. Early input or a timeout invalidates the whole set. After a valid response, the next wait starts immediately.
 
 ### 3D Reaction
 
-将反应测试映射为 low-poly 3D 场景：玩家不能移动，水平 yaw 限在 180°（`[-π/2, π/2]`），俯仰不限。敌人从随机左或右掩体出现，并在一秒响应窗内穿越到对侧；处于相机视锥内即可作答，不要求准星瞄准。超时或提前输入作废整轮。目标结束后会变灰、下落并淡出后移除。
+Look around a fixed low-poly room using the mouse, with a 180° horizontal range. After a random 1–4 second wait, a target crosses between covers within a one-second response window. Click while the target is inside the camera's view; aiming the crosshair directly at it is unnecessary. Early input or a timeout invalidates the whole set.
 
 ### OSU
 
-命中只取决于当前顺序和输入时的位置，不需要等待目标达到 100% 不透明度；左侧成绩面板允许鼠标穿透，覆盖该区域的目标也可点击。反应键按鼠标事件顺序锁定按下前的位置，按键后立即移出不会把本次命中改成未命中；鼠标左键直接使用点击事件坐标。
+Hit the fixed center green gate to arm a round. After a random 1–3 second wait, hit six numbered circles in order. Adjacent circles are equally spaced. Only the current circle and the next two are visible, at 100%, 60% and 30% opacity; non-adjacent circles may overlap.
 
-2D 序列测试，共 5 轮。每轮先出现固定中心绿门；点中后随机等待 1–3 秒，再出现 6 个编号圆（半径 48px）。相邻圆心等距 360px，首圆距绿门也恰好一格间距；仅要求连续三个互不重叠。同时显示当前及后续两个目标，不透明度依次为 100%、60%、30%。首次出现时当前目标立即显示，后续两个各间隔 200ms 开始用 200ms 渐显；命中后其余目标在 200ms 内渐变到新的透明度。命中后渐隐，并有从下一圆边缘划向再下一圆边缘的流星引导线。须按 1–6 顺序命中；计分为首个有效命中到末命中，首击后 6 秒超时作废。等待期提前点击、未命中或乱序会使整套五轮作废；绿门未点中不作废。成功一轮后，下一轮绿门立即出现。
+The cursor must be on the expected circle when you click or press a reaction key. You can hit the current circle while it is still fading in. Timing runs from the first valid hit to the last, with a six-second limit after the first hit. Early input during the wait, a miss or an out-of-order hit invalidates the whole set. Missing the green gate does not invalidate it. After a successful round, the next gate appears immediately.
 
 ### 3D Aim
 
-3D 清场测试，共 5 轮。每轮先打中心绿门（与灵敏度练习默认距离相同的房间中心位置），随后随机等待 1–3 秒，再同时出现 6 个互不重叠的球体（可视半径 0.42）。生成保证每个视角象限至少一球，并落在约 60° 视锥与练习房内。用受限鼠标视角瞄准，以中心射线命中（约 1.1× 可视半径容差）后开火；命中球立即消失。计分为出现帧到最后一击。等待期提前开火，或 6 秒内未清完，整套作废；绿门未中不作废。间隔不足 150ms 的开火会被忽略。清场成功后，下一轮绿门立即出现。
+Aim at and hit the center green gate to arm a round. After a random 1–3 second wait, six non-overlapping spheres appear together. Five fixed layouts appear once each in shuffled order, covering all four view quadrants.
+
+Aim with the mouse and fire using the left mouse button or a reaction key. Hit spheres disappear immediately. Timing runs from target appearance to the last hit. Early fire during the wait or failing to clear all targets within six seconds invalidates the whole set. Fires less than 150 ms apart are ignored; missing the green gate does not invalidate the set. After a successful clear, the next gate appears immediately.
 
 ### 3D Tracking
 
-持续控鼠测试，共五轮，每轮目标立即循环移动；准星连续处于大圆内 1 秒后开始计分 10 秒，准备期离开大圆则重新累计。目标无需按键即循环移动，准备阶段角速度不超过 20°/s；描边外缘的环形进度条显示连续跟踪进度，增长时播放滑动音，脱离则归零。准备时目标颜色略暗；开始计分时播放专用双音开始提示、恢复正常颜色，运动相位保持连续，并在 1 秒内渐渐恢复原速。轮间自动进入下一轮准备。目标为面向相机的同心圆，外圆半径 0.42、内圆 0.21，位于 z=-8 的固定平面，水平 / 垂直最大角度为 22° / 6°。
+Track a moving target using only mouse look; no firing is required. Preparation starts automatically. Keep the crosshair inside the outer circle continuously for one second to start a 10-second scored round. Leaving the circle during preparation resets acquisition; the outer progress ring shows your progress.
 
-五轮水平频率为 `[0.5, 0.6, 0.7, 0.6, 0.8]` Hz，垂直为 `[0.7, 0.5, 0.6, 0.9, 0.7]` Hz，每条轨迹 10 秒平滑循环，另以 5 秒周期在 0.45–1.55 倍之间平滑变速。轨迹固定可复现，但计分起始相位取决于何时完成跟踪准备。
+The target moves slowly during preparation and returns to full speed over the first scored second. Five fixed paths appear once each in shuffled order. Time inside the yellow inner circle earns full credit, time in the outer ring earns half credit, and time outside earns zero. A quiet high/low tone indicates inner/outer coverage during scoring.
 
-内圆按满分、外环按半分、圆外按零分累计时间并归一化为百分比，采用单调时钟加权。主成绩为五轮得分中位数，越高越好；同时显示平均角度误差，越低越好。追丢正常扣分，失去窗口焦点则中止整套。Tracking 使用规则 v3，OSU 使用 v3，其他项目为 v1。回到窗口后自动开始新的跟踪准备。渲染帧之间仍有采样误差，比较时应保持显示与帧率条件一致。
+The raw result is the median time-weighted coverage percentage; higher is better. Mean angular error is also shown; lower is better. Losing the target reduces coverage. Losing window focus cancels the set, and returning starts a fresh set automatically. Keep display and frame-rate conditions consistent when comparing results.
 
-### 历史记录
+## Scores
 
-完成某项目的五轮后，该次成绩自动进入一小时内存缓存，结果页不提供单项保存。回到菜单集齐五项有效成绩后，可填最多 64 字符的标签（例如设备、配置或状态），点击 `Save Session` 保存当前五项最佳成绩为一次测试结果；成功后清空缓存和标签，失败可在成绩过期前重试。
+Each test converts its five-round raw median to 0–100 points, displayed to one decimal place. Raw milliseconds or weighted tracking coverage remain visible. Higher points are always better. The menu shows a total out of 500 when all five results are available; missing results appear as `--`.
 
-整组记录保存点击保存时的 UTC、本地时间和 UTC 偏移；其中每个项目分别保留真实完成时间、五轮原始成绩、统计值、灵敏度和规则版本，追踪另含逐轮角度误差。不同项目可具有各自的灵敏度，保存不会改写它们的完成元数据。
+| Test | Reference scores |
+| --- | --- |
+| 2D / 3D Reaction | 50 ms = 100, 220 ms = 80, 1000 ms = 0 |
+| OSU | 500 ms = 100, 1800 ms = 70, 6000 ms = 0 |
+| 3D Aim | 2400 ms = 60, 6000 ms = 0 |
+| 3D Tracking | 0% coverage = 0, 30% = 60, 100% = 100 |
 
-`History` 支持项目、标签和整组五项规则版本组合筛选；列表每页 50 条，最新在前。图表将最近 100 组保存结果的五项成绩画在同一张分组柱状图中，y 轴固定 0–100；组内间隔紧凑、组间留大间隔。可用滚轮、触控板横滑或按住鼠标拖动左右浏览。点击柱条或列表查看整组及所点击项目的五轮明细。旧单项有独立的 legacy 版本选项，只画真实成绩，不补造另外四项；不同版本组合隔离。损坏或不支持的历史文件会保留并阻止覆盖。
+Reaction and OSU interpolate linearly in log(time) between these anchors. Aim uses `clamp(60 * ln(6000/t) / ln(6000/2400), 0, 100)`. Tracking uses `60 * ln(1+c) / ln(31)` for coverage `c <= 30`, then `60 + 40 * ln(c/30) / ln(100/30)`. All point scores are clamped to 0–100.
 
-### 3D Look Sensitivity
+Invalid or timed-out sets show 0.0 points and do not replace cached results. A completed 0% Tracking result is valid.
 
-无计分练习房：四球（半径同 3D Aim）排成正方形，打完后出现绿色中心门，击中后再刷新四球。下方常显灵敏度数值与滑条；面板默认近透明，按住 `Alt` 或调节设置时显现，空闲约 2 秒或松开 `Alt` 后再淡出。滚轮每次调灵敏度 0.05，按住 `Alt` 时为 0.01；滑条也是 0.01。
+## Sessions and history
 
-`-` / `=` 调正方形间距，`[` / `]` 拉近 / 推远目标和绿门，均支持系统键盘长按重复。距离默认 8，范围 3–20，每次 0.25；球尺寸保持不变。间距保证不重叠、不超过 90° 视锥，增大时整体抬高以免入地，拉近时必要会自动缩小。灵敏度、间距和距离均持久化；保存失败时回滚设置和场景。按住 `Alt` 显示光标以便拖滑条，松开后重新捕获视角。
+The menu keeps the latest valid result for each test from the current app run, even if it is worse than the previous one. Each result can be saved for one hour after completion. Expired results remain visible with faded styling and an `EXPIRED` label, but cannot be saved.
 
-## 界面
+`Save Session` requires five unexpired, unsaved results. An optional tag can contain up to 64 characters. Saving stores those five results as one session and clears the tag; scores and radar remain visible. Complete all five tests again to save another session. A failed save retains results for retry within their original save windows. Unsaved results are lost when the application exits.
 
-界面采用 [xianii 深色配色](https://github.com/Nigh/xianii-theme)，使用 Godot 原生控件，字体仅使用 Maple Mono。各项目与结果页左侧显示五轮成绩列表；计时进行中另有 LIVE 行显示已用毫秒；追踪显示剩余秒数和得分。结果页突出显示中位数、平均值和样本标准差。3D 场景使用 Godot 的 `Camera3D`、`WorldEnvironment`、光源、材质、网格和深度缓冲。
+`History` shows all sessions and explicitly labeled legacy single-test records, newest first, with 50 entries per page. Its chart shows the latest 100 entries chronologically on a fixed 0–100 point scale. Scroll, pan or drag horizontally to browse; hover a bar for individual rounds and metadata, or click a chart group or list row to select a session. Details include total points, per-test points and raw scores, sensitivity, rules versions and a radar. Legacy records show only their actual test, with points out of 100.
 
-测试的有效开始、响应与命中发出约 22ms 短音；早按、未命中或超时发出约 35ms 错误音。UI hover、press 和 slider 改值也有短促提示音；重复反应键、射击冷却内的输入与标签打字不发声。音效由程序启动时生成并缓存，不增加外部音频依赖。
+Sessions preserve each test's completion time, five samples, statistics, sensitivity and rules version, plus Tracking angular errors. Session save times include UTC, local time and UTC offset. Current rules versions are Reaction v1, OSU v3, Aim v2 and Tracking v4; check them when comparing results.
 
-Maple Mono 以 SIL Open Font License 1.1 随发布包分发。xianii-theme 的 MIT 许可保存在 `assets/licenses/xianii-theme-LICENSE.txt`。
+Settings are stored locally in `user://scores.txt`; saved history is in `user://history.json`. Valid older epoch-2 single-test records remain labeled as legacy records. Migration from valid pre-epoch-2 data discards old scores and history while preserving sensitivity. Damaged, unreadable or unsupported files are protected from overwriting. Cloud sync, history export, editing and deletion are not provided.
 
-## 精度与延迟
+## Sensitivity and practice
 
-### 评估的是什么
+All 3D modes share a sensitivity multiplier and a 103° horizontal field of view (about 70.5° vertically at 16:9). Sensitivity defaults to 1.00 and ranges from 0.10 to 5.00. Adjust it in `Settings`, or select `Open Sens Lab` for unscored practice: clear four spheres arranged in a square, then hit the center green gate to respawn them.
 
-本工具测量的是「人 + 电脑」整条链路的响应能力，而不是单独的人体反应时或单独的硬件延迟。分数里同时包含你本人的反应，以及显示、输入、系统和本程序共同带来的延迟。
+- Mouse wheel: adjust sensitivity by 0.05; hold `Alt` for 0.01 steps.
+- Hold `Alt`: release the cursor to drag the sensitivity slider; release `Alt` to resume mouse look.
+- `-` / `=`: decrease / increase square spacing.
+- `[` / `]`: bring targets closer / move them farther away in 0.25 steps, from 3 to 20 (default 8).
 
-因此更有意义的对比是控制变量后的比较：
+Spacing and distance keys support holding for repeated adjustments. Spacing shrinks when needed to keep targets within view and prevent overlap. The bottom panel appears while adjusting and fades after inactivity. Sensitivity, spacing and distance are saved; a failed save restores the previous settings and layout.
 
-- **不同的人，同一台电脑**：可以比较人与人之间的反应能力。
-- **同一个人，不同的电脑**：可以比较不同设备对该人在游戏中实际反应延迟的影响。
-- **同一个人，同一台电脑，不同时间**：可以观察竞技状态的起伏；想上分时，可以选择状态更好的时段去打排位。
+## Interpreting results
 
-反过来，拿「不同的人在不同电脑上」的分数直接互比意义不大：两边的人和设备都变了，分不清差距来自哪里。
+SyncRateBench measures the **human + computer response chain**, including display, input and system latency. Useful comparisons keep one side fixed:
 
-### 已采取的措施
+- Different people on the same computer: compare player response.
+- The same person on different computers: compare device impact.
+- The same person on the same computer over time: observe changes in form.
 
-- 反应类项目使用独立于 Godot 节点的状态机，确保试次、随机延迟、超时和统计公式一致；序列类项目（OSU / 3D Aim）使用各自的小状态机。
-- 目标状态与 `Time.get_ticks_usec()` 的起始时间在同一 Godot 处理帧设置，且不在该转换中加载资源或创建网格。
-- 时间以引擎内微秒差计量。
+Scores from different people on different computers cannot isolate either factor. Timing uses Godot's monotonic microsecond clock, not a physical measurement of when photons reach the screen. Display scanout, pixel response, input polling and operating-system scheduling cannot be separated from the result. VSync and accumulated mouse input are disabled to reduce software latency; tearing may occur.
 
-### 软件无法可靠计算的延迟
+## Development and builds
 
-- 显示合成器、驱动和显示器可能仍会同步或缓冲帧。
-- 显示器扫描方向、像素响应时间与过冲。
-- USB 或无线输入设备的固件、轮询率和传输延迟。
-- 操作系统输入处理、线程调度及事件队列延迟。
+Clone [SyncRateBench](https://github.com/Nigh/SyncRateBench) and open `project.godot` in Godot. The project uses GDScript, native Godot UI and 3D rendering, with no .NET requirement. The configured renderer is Compatibility. The release workflow uses Godot 4.4.1 with matching non-.NET export templates.
 
-这些硬件与系统环节无法从分数里剥离，所以结果应按上面的控制变量方式解读，而不是当作跨场景的绝对反应时间校准值。
-
-## 本地构建
-
-需要 Godot 4.4 或更高版本（及匹配的导出模板）。Linux/Windows 建议使用 Forward+；Compatibility 是经过测试的后备渲染器。
+From the repository root, import the project and run the checks:
 
 ```sh
+godot --headless --path . --editor --quit
 godot --headless --path . --script tests/reaction_state_test.gd
 godot --headless --path . --script tests/sequence_state_test.gd
 godot --headless --path . --script tests/playthrough_test.gd
 godot --headless --path . --script tests/history_tracking_test.gd
-godot --headless --path . --editor --quit
 ```
 
-在编辑器中打开项目后，选择对应的导出预设生成发布包。
+Use the `Linux`, `Windows` or `macOS` export preset to build a release package. Distribute all export files, including separate `.pck` resources when present. macOS packages use the Universal template for Intel and Apple Silicon. Pull requests build packages for all three platforms; `v*` tags or manual release workflow runs publish releases.
 
-## 许可证
+## License and credits
 
-[MIT](LICENSE)
-
-
-五项颜色全局统一：2D Reaction 粉、3D Reaction 紫、OSU 青、3D Aim 黄、Tracking 绿，应用于菜单入口边框、等宽实底深色粗体标题、成绩动画、雷达图与历史柱状图。结果页雷达图显示本次结果和其余项目的一小时内未保存最佳成绩，缺项显示 `--`。Maple Mono 使用原生字体加粗，无额外字体资源。
-
-由待机/绿门进入随机等待时，播放专用 90ms 双音开始提示，替代按键/命中音；Reaction 自动进入下一轮等待也播放该提示。OSU 动画的 tween 归属目标节点，离开或清场时随节点取消，避免释放目标后的 lambda 捕获报错。
+[MIT](LICENSE). The interface uses the [xianii dark palette](https://github.com/Nigh/xianii-theme) and Maple Mono as its bundled font. Release packages include third-party notices: [Maple Mono SIL OFL 1.1](assets/MapleMono-OFL.txt) and [xianii-theme MIT](assets/licenses/xianii-theme-LICENSE.txt).
