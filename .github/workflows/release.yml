@@ -29,9 +29,9 @@ jobs:
             os: windows-latest
             asset: nekobenchmark-windows-x64.zip
             preset: Windows
-          - name: macOS x64
+          - name: macOS Universal
             os: macos-26-intel
-            asset: nekobenchmark-macos-x64.zip
+            asset: nekobenchmark-macos-universal.zip
             preset: macOS
     runs-on: ${{ matrix.os }}
     steps:
