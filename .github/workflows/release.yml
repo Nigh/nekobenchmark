@@ -1,6 +1,7 @@
 name: Export and release
 
 on:
+  pull_request:
   push:
     tags: ["v*"]
   workflow_dispatch:
@@ -24,26 +25,25 @@ jobs:
             os: ubuntu-latest
             asset: nekobenchmark-linux-x64.zip
             preset: Linux
-            binary: nekobenchmark.x86_64
           - name: Windows x64
             os: windows-latest
             asset: nekobenchmark-windows-x64.zip
             preset: Windows
-            binary: nekobenchmark.exe
           - name: macOS x64
             os: macos-26-intel
             asset: nekobenchmark-macos-x64.zip
             preset: macOS
-            binary: NekoBenchmark.zip
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - name: Set up Godot
-        uses: firebelley/setup-godot@v1
+        uses: chickensoft-games/setup-godot@v2
         with:
-          godot-version: 4.4.1
-          include-export-templates: true
+          version: 4.4.1
+          use-dotnet: false
+          include-templates: true
       - name: Import and verify project
+        shell: bash
         run: |
           godot --headless --path . --editor --quit
           godot --headless --path . --script tests/reaction_state_test.gd
@@ -51,15 +51,18 @@ jobs:
           godot --headless --path . --script tests/playthrough_test.gd
           godot --headless --path . --script tests/history_tracking_test.gd
       - name: Export project
-        run: godot --headless --path . --export-release "${{ matrix.preset }}"
+        shell: bash
+        run: |
+          mkdir -p dist
+          godot --headless --path . --export-release "${{ matrix.preset }}"
       - name: Package export
         shell: bash
         run: |
           mkdir -p package
-          cp "dist/${{ matrix.binary }}" package/
+          cp dist/* package/
           cp assets/MapleMono-OFL.txt package/
           cp assets/licenses/xianii-theme-LICENSE.txt package/
-          (cd package && zip -r "../dist/${{ matrix.asset }}" .)
+          (cd package && python3 -m zipfile -c "../dist/${{ matrix.asset }}" *)
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
@@ -67,6 +70,7 @@ jobs:
           if-no-files-found: error
 
   release:
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     steps:

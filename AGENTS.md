@@ -226,7 +226,11 @@ The bundled Maple Mono font is used directly as a Godot resource.
   project export presets for release packages. Persistence checks use isolated
   test files, never real score/history files. The release workflow runs the
   same import and four checks, and packages the xianii MIT notice alongside
-  the font license.
+  the font license. It uses chickensoft-games/setup-godot@v2 with Godot 4.4.1
+  and non-.NET export templates. Pull requests build and package all three
+  platforms without publishing; v* tags or manual dispatch publish releases.
+  Packages include all export files (including standalone .pck resources),
+  and Python's zipfile creates archives on every runner.
 
 ## Maintenance rule
 
